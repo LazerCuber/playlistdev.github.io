@@ -2,7 +2,7 @@
 
 A web application to manage your YouTube playlists with improved performance and RAM usage compared to the native YouTube interface. It offers core functionalities similar to YouTube and will soon support Bilibili videos as well.
 
-**Access the application:** [Playlist Manager](https://lazercuber.github.io/ltcplaylistdev.github.io/)
+**Access the application:** [Playlist Manager](https://lazercuber.github.io/playlistdev.github.io/)
 
 ## Features
 
