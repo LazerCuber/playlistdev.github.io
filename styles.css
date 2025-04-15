@@ -1084,6 +1084,11 @@
                 /* Ensure it's scrollable if content overflows */
             }
 
+            /* Add this rule to hide the main sidebar title on mobile */
+            .sidebar-header h2 {
+                display: none;
+            }
+
             .sidebar-footer {
                 padding: 12px 16px;
                 /* Adjust padding */
@@ -1133,6 +1138,13 @@
             .video-form input[type="url"] {
                 margin-bottom: 0;
                 /* Remove bottom margin */
+            }
+
+            /* Add this rule to prevent mobile zoom on input focus */
+            input[type="text"],
+            input[type="url"],
+            input[type="search"] {
+                font-size: 16px; /* Prevent auto-zoom on iOS */
             }
 
             .player-wrapper {
