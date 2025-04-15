@@ -318,11 +318,7 @@ function onYouTubeIframeAPIReady() {
     if (document.getElementById('player')) {
         ytPlayer = new YT.Player('player', {
             height: '100%', width: '100%',
-            playerVars: { 
-                'playsinline': 1, 
-                'rel': 0,
-                'origin': window.location.origin // Add origin verification
-            }, 
+            playerVars: { 'playsinline': 1, 'rel': 0 }, // playsinline for mobile, rel=0 to reduce related videos
             events: {
                 'onReady': onPlayerReady,
                 'onStateChange': onPlayerStateChange,
