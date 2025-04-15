@@ -44,6 +44,10 @@ let dragTargetElement = null; // Element we are dragging over
 let currentTheme = 'light';
 let isResizing = false;
 let lastSidebarWidth = null;
+// Touch drag state
+let isTouchDragging = false;
+let touchDragStartY = 0;
+let touchDraggedElement = null;
 // Pagination State
 const videosPerPage = 20; // Number of videos to show per page
 let currentPage = 1;
@@ -145,7 +149,7 @@ function setupEventListeners() {
     clearPlaylistBtn.addEventListener('click', handleClearPlaylist);
     themeToggleBtn.addEventListener('click', toggleTheme);
     shufflePlaylistBtn.addEventListener('click', handleShufflePlaylist); // Added
-    playlistSearchInput.addEventListener('input', handlePlaylistSearch);
+    playlistSearchInput.addEventListener('input', debounce(handlePlaylistSearch, 300));
     importBtn.addEventListener('click', () => importFileEl.click());
     importFileEl.addEventListener('change', handleImportPlaylists);
     exportBtn.addEventListener('click', handleExportPlaylists);
@@ -204,6 +208,12 @@ function setupEventListeners() {
             // renderPaginationControls() is called by renderVideos
         }
     });
+
+    // --- Touch Event Listeners for Drag/Drop ---
+    videoGridEl.addEventListener('touchstart', handleTouchStart, { passive: false }); // Need passive: false for preventDefault
+    videoGridEl.addEventListener('touchmove', handleTouchMove, { passive: false }); // Need passive: false for preventDefault
+    videoGridEl.addEventListener('touchend', handleTouchEnd);
+    videoGridEl.addEventListener('touchcancel', handleTouchEnd); // Treat cancel same as end
 }
 
 // --- Drag and Drop ---
@@ -351,9 +361,16 @@ function onPlayerStateChange(event) {
     if (event.data === YT.PlayerState.PLAYING) {
         currentlyPlayingVideoId = getCurrentPlayingVideoIdFromApi();
         updatePlayingVideoHighlight(currentlyPlayingVideoId); // Highlight the playing video
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
     }
-    if (event.data === YT.PlayerState.ENDED && isAutoplayEnabled) {
-        playNextVideo();
+    if (event.data === YT.PlayerState.ENDED) {
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "none"; // Or 'paused'? 'none' seems better for ended.
+        if (isAutoplayEnabled) {
+            playNextVideo();
+        }
+    }
+    if (event.data === YT.PlayerState.PAUSED) {
+         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
     }
     // Potentially remove highlight if paused? Maybe not, keep it simple.
     // if (event.data === YT.PlayerState.PAUSED) {
@@ -369,6 +386,7 @@ function onPlayerError(event) {
     const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : 'Unknown video';
 
     console.error(`Error occurred for video: ${videoUrl}`); // Log the URL
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none'; // Update state on error
 
     switch (event.data) {
         case 2: // Invalid parameter
@@ -754,6 +772,20 @@ function playVideo(videoId) {
         // e.g., display a message inside the #player div or on the wrapper
         // Example: document.getElementById('player').innerHTML = '<p>Loading player...</p>';
     }
+
+    // --- Media Session Update ---
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    if (currentPlaylist) {
+        const videoData = currentPlaylist.videos.find(v => v.id === videoId);
+        if (videoData) {
+            updateMediaSessionMetadata(videoData);
+        } else {
+             updateMediaSessionMetadata(null); // Clear if video data not found
+        }
+    } else {
+        updateMediaSessionMetadata(null); // Clear if playlist not found
+    }
+    // --- End Media Session Update ---
 }
 
 function stopVideo() {
@@ -762,6 +794,11 @@ function stopVideo() {
     }
     currentlyPlayingVideoId = null;
     updatePlayingVideoHighlight(null); // Remove highlight when stopped
+    if ('mediaSession' in navigator) { // Clear media session on stop
+        navigator.mediaSession.playbackState = 'none';
+        // Don't clear metadata here, handleClosePlayer might do it
+        // updateMediaSessionMetadata(null);
+    }
 }
 
 function extractVideoId(url) {
@@ -1040,6 +1077,9 @@ function showToast(message, type = 'info', duration = 3000) {
 function handleClosePlayer() {
     stopVideo(); // stopVideo now handles removing the highlight
     playerWrapperEl.classList.add('hidden');
+    if ('mediaSession' in navigator) { // Clear media session on explicit close
+        updateMediaSessionMetadata(null);
+    }
 }
 
 function renderPaginationControls(totalVideos, totalPages) {
@@ -1059,6 +1099,222 @@ function renderPaginationControls(totalVideos, totalPages) {
 
     prevPageBtn.disabled = currentPage === 1;
     nextPageBtn.disabled = currentPage === totalPages;
+}
+
+// --- Utility ---
+
+// Debounce function: prevents function from running too often
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+};
+
+// --- Media Session API Integration ---
+
+function updateMediaSessionMetadata(video) {
+    if (!('mediaSession' in navigator)) {
+        // console.log("Media Session API not supported.");
+        return;
+    }
+
+    if (!video) {
+        // Clear metadata if no video is provided (e.g., on stop)
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.playbackState = 'none';
+        // console.log("Media Session metadata cleared.");
+        return;
+    }
+
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    const playlistName = currentPlaylist ? currentPlaylist.name : 'Playlist';
+
+    // console.log("Updating Media Session Metadata for:", video.title);
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+        title: video.title,
+        artist: 'YouTube', // Or extract channel if available from noembed/API later
+        album: playlistName,
+        artwork: [
+            // Provide different sizes if available, starting with largest
+            // { src: video.thumbnail.replace('mqdefault', 'maxresdefault'), sizes: '1280x720', type: 'image/jpeg' }, // Might not exist
+            { src: video.thumbnail.replace('mqdefault', 'hqdefault'), sizes: '480x360', type: 'image/jpeg' }, // High quality
+            { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' }, // Medium quality (mqdefault)
+            // { src: video.thumbnail.replace('mqdefault', 'sddefault'), sizes: '640x480', type: 'image/jpeg' }, // Standard definition
+        ]
+    });
+
+    // Update playback state (usually done in onPlayerStateChange)
+    // navigator.mediaSession.playbackState = "playing"; // Set this when playback actually starts
+
+    setupMediaSessionActionHandlers(); // Ensure handlers are set up
+}
+
+function setupMediaSessionActionHandlers() {
+     if (!('mediaSession' in navigator)) return;
+
+    // Clear previous handlers to avoid duplicates if called multiple times
+    navigator.mediaSession.setActionHandler('play', null);
+    navigator.mediaSession.setActionHandler('pause', null);
+    navigator.mediaSession.setActionHandler('stop', null);
+    navigator.mediaSession.setActionHandler('previoustrack', null);
+    navigator.mediaSession.setActionHandler('nexttrack', null);
+
+    // console.log("Setting up Media Session Action Handlers");
+
+    navigator.mediaSession.setActionHandler('play', () => {
+        // console.log("Media Session: Play");
+        if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+            ytPlayer.playVideo();
+             navigator.mediaSession.playbackState = "playing";
+        }
+    });
+
+    navigator.mediaSession.setActionHandler('pause', () => {
+        // console.log("Media Session: Pause");
+        if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+            ytPlayer.pauseVideo();
+             navigator.mediaSession.playbackState = "paused";
+        }
+    });
+
+    navigator.mediaSession.setActionHandler('stop', () => {
+        // console.log("Media Session: Stop");
+        handleClosePlayer(); // Use the existing close/stop function
+    });
+
+    navigator.mediaSession.setActionHandler('previoustrack', () => {
+        // console.log("Media Session: Previous Track");
+        playPreviousVideo();
+    });
+
+    navigator.mediaSession.setActionHandler('nexttrack', () => {
+        // console.log("Media Session: Next Track");
+        playNextVideo();
+    });
+}
+
+function playPreviousVideo() {
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    if (!currentPlaylist || currentPlaylist.videos.length < 1 || !currentlyPlayingVideoId) return;
+
+    const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
+    if (currentIndex === -1) return; // Current video not found
+
+    // Calculate previous index, wrapping around to the end
+    const prevIndex = (currentIndex - 1 + currentPlaylist.videos.length) % currentPlaylist.videos.length;
+    const prevVideo = currentPlaylist.videos[prevIndex];
+
+    if (prevVideo) {
+        playVideo(prevVideo.id);
+    }
+}
+
+// --- Touch Drag and Drop Handlers ---
+
+function handleTouchStart(event) {
+    const targetCard = event.target.closest('.video-card[draggable="true"]');
+    const dragHandle = event.target.closest('.drag-handle');
+
+    // Only start drag if touching the drag handle
+    if (targetCard && dragHandle) {
+        isTouchDragging = true;
+        draggedVideoId = targetCard.dataset.videoId;
+        touchDraggedElement = targetCard;
+        touchDragStartY = event.touches[0].clientY; // Store initial Y pos
+
+        // event.preventDefault(); // Prevent scrolling while initiating drag (can be disruptive)
+
+        // Add dragging style immediately (no delay needed like mouse drag)
+        touchDraggedElement.classList.add('dragging');
+
+        // Optional: Provide haptic feedback if supported
+        if (navigator.vibrate) {
+            navigator.vibrate(50); // Vibrate for 50ms
+        }
+    } else {
+        isTouchDragging = false; // Ensure state is reset if not dragging
+        draggedVideoId = null;
+        touchDraggedElement = null;
+    }
+}
+
+function handleTouchMove(event) {
+    if (!isTouchDragging || !touchDraggedElement) return;
+
+    event.preventDefault(); // *** Crucial: Prevent page scrolling while dragging ***
+
+    const touch = event.touches[0];
+    const currentY = touch.clientY;
+
+    // Find the element under the current touch position
+    // Temporarily hide the dragged element to find what's underneath
+    touchDraggedElement.style.visibility = 'hidden';
+    const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
+    touchDraggedElement.style.visibility = ''; // Restore visibility
+
+    const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card') : null;
+
+    // Clear previous drag-over styles
+    clearDragOverStyles();
+
+    if (targetCard && targetCard !== touchDraggedElement) {
+        targetCard.classList.add('drag-over');
+        dragTargetElement = targetCard; // Use the same variable as mouse drag for consistency
+    } else {
+        dragTargetElement = null; // No valid drop target under finger
+    }
+
+    // Optional: Move the element visually with the touch (more complex)
+    // const deltaY = currentY - touchDragStartY;
+    // touchDraggedElement.style.transform = `translateY(${deltaY}px)`;
+}
+
+function handleTouchEnd(event) {
+    if (!isTouchDragging || !touchDraggedElement) {
+         // If not dragging, ensure any potentially added classes are removed
+         clearDragOverStyles();
+         if (touchDraggedElement) touchDraggedElement.classList.remove('dragging');
+         isTouchDragging = false;
+         draggedVideoId = null;
+         touchDraggedElement = null;
+         dragTargetElement = null;
+        return;
+    }
+
+    // Reset visual styles
+    touchDraggedElement.classList.remove('dragging');
+    // touchDraggedElement.style.transform = ''; // Reset transform if applied in touchmove
+    clearDragOverStyles();
+
+
+    const dropTargetId = dragTargetElement ? dragTargetElement.dataset.videoId : null;
+
+    // Perform the drop action if a valid target was identified
+    if (draggedVideoId && dropTargetId && dropTargetId !== draggedVideoId) {
+        handleReorderVideo(draggedVideoId, dropTargetId);
+        // Provide haptic feedback for successful drop
+        if (navigator.vibrate) {
+             navigator.vibrate([50, 50, 50]); // Pattern for success feedback
+        }
+    } else if (draggedVideoId && !dropTargetId) {
+        // Check if dropped outside any specific card (potentially at the end)
+        // This logic might need refinement based on exact desired behavior
+        // For now, we'll assume dropping outside means "cancel" or "no change"
+        // If dropping at the end is desired, more complex logic is needed to find the last element.
+    }
+
+    // Reset state AFTER potential reorder
+    isTouchDragging = false;
+    draggedVideoId = null;
+    touchDraggedElement = null;
+    dragTargetElement = null;
 }
 
 // --- Start the app ---
