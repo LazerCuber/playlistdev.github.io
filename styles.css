@@ -759,6 +759,18 @@
             background: var(--surface-color-alt);
         }
 
+        /* Style for the active/playing video card */
+        .video-card.playing {
+            border-color: var(--primary-color);
+            box-shadow: var(--shadow-md);
+            background-color: var(--primary-color-light);
+        }
+
+        html[data-theme="dark"] .video-card.playing {
+            background-color: rgba(var(--primary-color-rgb), 0.15); /* Slightly more pronounced background */
+            border-color: var(--primary-color-dark);
+        }
+
         /* Style for the drop target indicator */
         .video-card.drag-over {
             box-shadow: var(--shadow-md);
@@ -1224,6 +1236,19 @@
                 padding: 6px 10px;
                 /* Slightly larger font buttons */
             }
+
+            /* --- Mobile Tap Feedback --- */
+            .playlist-item:active {
+                background-color: var(--hover-bg-color); /* Reuse hover color for feedback */
+                transition: background-color 0.05s ease-out; /* Faster feedback transition */
+            }
+
+            .video-card:active {
+                transform: scale(0.98); /* Slight shrink effect */
+                background-color: var(--hover-bg-color);
+                transition: background-color 0.05s ease-out, transform 0.05s ease-out;
+            }
+            /* --- End Mobile Tap Feedback --- */
 
         }
 

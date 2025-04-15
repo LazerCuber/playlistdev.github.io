@@ -318,7 +318,11 @@ function onYouTubeIframeAPIReady() {
     if (document.getElementById('player')) {
         ytPlayer = new YT.Player('player', {
             height: '100%', width: '100%',
-            playerVars: { 'playsinline': 1, 'rel': 0 }, // playsinline for mobile, rel=0 to reduce related videos
+            playerVars: { 
+                'playsinline': 1, 
+                'rel': 0,
+                'origin': window.location.origin // Add origin verification
+            }, 
             events: {
                 'onReady': onPlayerReady,
                 'onStateChange': onPlayerStateChange,
@@ -350,18 +354,26 @@ function onPlayerStateChange(event) {
     // console.log("Player state changed:", event.data); // Log state changes for debugging
     if (event.data === YT.PlayerState.PLAYING) {
         currentlyPlayingVideoId = getCurrentPlayingVideoIdFromApi();
-        // Highlight the currently playing video card? (Optional enhancement)
+        updatePlayingVideoHighlight(currentlyPlayingVideoId); // Highlight the playing video
     }
     if (event.data === YT.PlayerState.ENDED && isAutoplayEnabled) {
         playNextVideo();
     }
-    // Add more state handling if needed (BUFFERING, CUED, etc.)
+    // Potentially remove highlight if paused? Maybe not, keep it simple.
+    // if (event.data === YT.PlayerState.PAUSED) {
+    //     updatePlayingVideoHighlight(null);
+    // }
 }
 
 // Added a dedicated error handler
 function onPlayerError(event) {
     console.error('YouTube Player Error:', event.data);
     let errorMsg = 'An unknown player error occurred.';
+    const videoId = getCurrentPlayingVideoIdFromApi(); // Get ID if possible
+    const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : 'Unknown video';
+
+    console.error(`Error occurred for video: ${videoUrl}`); // Log the URL
+
     switch (event.data) {
         case 2: // Invalid parameter
             errorMsg = 'Invalid video ID or player parameter.';
@@ -371,16 +383,32 @@ function onPlayerError(event) {
             break;
         case 100: // Video not found
             errorMsg = 'Video not found (removed or private).';
-            break;
+            if (isAutoplayEnabled) {
+                showToast(`${errorMsg} Skipping to next video.`, 'error');
+                playNextVideo(); // Skip if autoplaying
+            } else {
+                 showToast(`Player Error: ${errorMsg}`, 'error');
+            }
+            return; // Exit after handling
         case 101: // Playback not allowed
         case 150: // Playback not allowed
-            errorMsg = 'Playback not allowed by the video owner.';
-            break;
+            errorMsg = 'Playback disallowed by video owner. Try watching directly on YouTube.';
+             if (isAutoplayEnabled) {
+                showToast(`${errorMsg} Skipping to next video.`, 'error');
+                playNextVideo(); // Skip if autoplaying
+            } else {
+                 showToast(`Player Error: ${errorMsg}`, 'error');
+                 // Optional: Add a button/link in the toast or UI to open the video on YouTube
+                 // console.log(`Watch on YouTube: ${videoUrl}`);
+            }
+            return; // Exit after handling
         default:
             errorMsg = `Player error code: ${event.data}`;
     }
+    // Show toast only for unhandled cases or non-autoplay skips
     showToast(`Player Error: ${errorMsg}`, 'error');
-    // Optional: try to play next video or stop?
+
+    // Optional: try to play next video or stop? Maybe just stop and hide.
     // stopVideo();
     // playerWrapperEl.classList.add('hidden');
 }
@@ -486,6 +514,13 @@ function selectPlaylist(id) {
     currentPage = 1; // Reset to first page when selecting a playlist
     saveLastSelectedPlaylist(id);
 
+    // --- UX Improvement: Clear search when selecting a playlist ---
+    if (playlistSearchInput.value !== '') {
+        playlistSearchInput.value = '';
+        // Re-rendering playlists will happen below anyway
+    }
+    // --- End UX Improvement ---
+
     // Update UI
     currentPlaylistTitleEl.textContent = escapeHTML(selectedPlaylist.name);
     videoFormEl.classList.remove('hidden');
@@ -493,7 +528,8 @@ function selectPlaylist(id) {
     addVideoBtn.disabled = videoUrlInput.value.trim() === ''; // Set initial state based on input
     videoPlaceholderEl.classList.add('hidden');
     playerWrapperEl.classList.add('hidden');
-    stopVideo();
+    stopVideo(); // This will also clear the highlight
+    updatePlayingVideoHighlight(null); // Explicitly clear highlight
 
     renderPlaylists(); // Update active state
     renderVideos(); // Render videos for the selected playlist
@@ -552,6 +588,23 @@ function handleShufflePlaylist() {
 // --- End Playlist Shuffle Functionality ---
 
 // --- Video Management ---
+
+// Helper function to update the visual highlight on the playing video card
+function updatePlayingVideoHighlight(videoId) {
+    // Remove 'playing' class from all video cards first
+    videoGridEl.querySelectorAll('.video-card.playing').forEach(card => {
+        card.classList.remove('playing');
+    });
+
+    // Add 'playing' class to the current video card if an ID is provided
+    if (videoId) {
+        const currentVideoCard = videoGridEl.querySelector(`.video-card[data-video-id="${videoId}"]`);
+        if (currentVideoCard) {
+            currentVideoCard.classList.add('playing');
+        }
+    }
+}
+
 async function handleAddVideo() {
     const url = videoUrlInput.value.trim();
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
@@ -673,6 +726,7 @@ function playVideo(videoId) {
     // Ensure the player container is visible first
     playerWrapperEl.classList.remove('hidden');
     currentlyPlayingVideoId = videoId; // Set this immediately for state tracking
+    updatePlayingVideoHighlight(videoId); // Highlight the selected video immediately
 
     // Check if player is initialized AND ready
     if (ytPlayer && isPlayerReady) {
@@ -711,6 +765,7 @@ function stopVideo() {
         ytPlayer.stopVideo();
     }
     currentlyPlayingVideoId = null;
+    updatePlayingVideoHighlight(null); // Remove highlight when stopped
 }
 
 function extractVideoId(url) {
@@ -987,7 +1042,7 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 function handleClosePlayer() {
-    stopVideo();
+    stopVideo(); // stopVideo now handles removing the highlight
     playerWrapperEl.classList.add('hidden');
 }
 
