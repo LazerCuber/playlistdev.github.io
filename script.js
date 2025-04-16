@@ -388,42 +388,42 @@ function onPlayerError(event) {
     console.error(`Error occurred for video: ${videoUrl}`); // Log the URL
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none'; // Update state on error
 
-    let shouldSkip = false; // Flag to check if we should skip
+    let shouldSkip = false; // Flag to determine if we should try skipping
 
     switch (event.data) {
-        case 2: // Invalid parameter - Don't usually skip on this
+        case 2: // Invalid parameter
             errorMsg = 'Invalid video ID or player parameter.';
+            shouldSkip = true; // Attempt to skip on this error too
             break;
-        case 5: // HTML5 player error - Add skipping for this during autoplay
+        case 5: // HTML5 player error
             errorMsg = 'Error in the HTML5 player.';
-            if (isAutoplayEnabled) shouldSkip = true;
+            shouldSkip = true; // Attempt to skip on this error too
             break;
         case 100: // Video not found
             errorMsg = 'Video not found (removed or private).';
-            if (isAutoplayEnabled) shouldSkip = true;
+            shouldSkip = true;
             break;
         case 101: // Playback not allowed
         case 150: // Playback not allowed
             errorMsg = 'Playback disallowed by video owner. Try watching directly on YouTube.';
-             if (isAutoplayEnabled) shouldSkip = true;
+            shouldSkip = true;
             break;
         default:
             errorMsg = `Player error code: ${event.data}`;
-            // Optionally, decide if other unknown errors should also trigger a skip during autoplay
-            // if (isAutoplayEnabled) shouldSkip = true;
+            shouldSkip = true; // Attempt to skip on unknown errors as well
     }
 
-    if (shouldSkip) {
-        showToast(`${errorMsg} Skipping to next video.`, 'error');
-        playNextVideo(); // Skip if autoplaying and flag is set
+    // Show toast regardless of whether we skip or not (unless handled specially below)
+    showToast(`Player Error: ${errorMsg}`, 'error');
+
+    // Attempt to skip to the next video if autoplay is enabled and skipping is flagged
+    if (isAutoplayEnabled && shouldSkip) {
+        showToast(`${errorMsg} Skipping to next video.`, 'info', 4000); // Show a follow-up toast
+        // Use a small delay to allow the error toast to show first,
+        // and prevent potential race conditions if errors happen rapidly.
+        setTimeout(playNextVideo, 500);
     } else {
-        // Show toast only for non-skipped errors or if autoplay is off
-        showToast(`Player Error: ${errorMsg}`, 'error');
-        // Optional: Add link for disallowed videos even when not skipping
-        // if (event.data === 101 || event.data === 150) {
-        //    console.log(`Watch on YouTube: ${videoUrl}`);
-        // }
-        // Optional: Stop/hide player on critical non-skipping errors?
+        // Optional: If not autoplaying or not skipping, maybe hide player?
         // stopVideo();
         // playerWrapperEl.classList.add('hidden');
     }
@@ -439,13 +439,38 @@ function getCurrentPlayingVideoIdFromApi() {
 
 function playNextVideo() {
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (!currentPlaylist || currentPlaylist.videos.length < 1 || !currentlyPlayingVideoId) return;
+    if (!currentPlaylist || currentPlaylist.videos.length < 1) return; // Check if playlist is empty
+
+    // If there's no currently playing video ID tracked, or only one video, don't proceed
+    if (!currentlyPlayingVideoId && currentPlaylist.videos.length > 0) {
+        // Maybe play the first video if nothing was playing? Or just return?
+        // For now, let's assume playNext is only called after a video ends/errors.
+        console.log("playNextVideo called but no video was playing. Starting from first video.");
+        playVideo(currentPlaylist.videos[0].id); // Try playing the first video as a fallback
+        return;
+    }
+    if (!currentlyPlayingVideoId || currentPlaylist.videos.length < 2) return; // Need at least 2 videos to advance
+
     const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
-    if (currentIndex === -1) return; // Should not happen if playing
+    if (currentIndex === -1) {
+        // If the currently tracked video isn't found (e.g., deleted?), play the first one
+        console.warn("Currently playing video not found in playlist during playNext. Playing first video.");
+        if (currentPlaylist.videos.length > 0) {
+            playVideo(currentPlaylist.videos[0].id);
+        }
+        return;
+    }
+
     const nextIndex = (currentIndex + 1) % currentPlaylist.videos.length;
     const nextVideo = currentPlaylist.videos[nextIndex];
     if (nextVideo) {
+        console.log(`Autoplaying next video: ${nextVideo.title} (Index: ${nextIndex})`);
         playVideo(nextVideo.id);
+    } else {
+        console.error(`Could not find next video at index ${nextIndex}`);
+        // Maybe stop playback or try the first video again?
+        stopVideo();
+        playerWrapperEl.classList.add('hidden');
     }
 }
 
