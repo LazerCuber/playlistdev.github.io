@@ -388,43 +388,45 @@ function onPlayerError(event) {
     console.error(`Error occurred for video: ${videoUrl}`); // Log the URL
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none'; // Update state on error
 
+    let shouldSkip = false; // Flag to check if we should skip
+
     switch (event.data) {
-        case 2: // Invalid parameter
+        case 2: // Invalid parameter - Don't usually skip on this
             errorMsg = 'Invalid video ID or player parameter.';
             break;
-        case 5: // HTML5 player error
+        case 5: // HTML5 player error - Add skipping for this during autoplay
             errorMsg = 'Error in the HTML5 player.';
+            if (isAutoplayEnabled) shouldSkip = true;
             break;
         case 100: // Video not found
             errorMsg = 'Video not found (removed or private).';
-            if (isAutoplayEnabled) {
-                showToast(`${errorMsg} Skipping to next video.`, 'error');
-                playNextVideo(); // Skip if autoplaying
-            } else {
-                 showToast(`Player Error: ${errorMsg}`, 'error');
-            }
-            return; // Exit after handling
+            if (isAutoplayEnabled) shouldSkip = true;
+            break;
         case 101: // Playback not allowed
         case 150: // Playback not allowed
             errorMsg = 'Playback disallowed by video owner. Try watching directly on YouTube.';
-             if (isAutoplayEnabled) {
-                showToast(`${errorMsg} Skipping to next video.`, 'error');
-                playNextVideo(); // Skip if autoplaying
-            } else {
-                 showToast(`Player Error: ${errorMsg}`, 'error');
-                 // Optional: Add a button/link in the toast or UI to open the video on YouTube
-                 // console.log(`Watch on YouTube: ${videoUrl}`);
-            }
-            return; // Exit after handling
+             if (isAutoplayEnabled) shouldSkip = true;
+            break;
         default:
             errorMsg = `Player error code: ${event.data}`;
+            // Optionally, decide if other unknown errors should also trigger a skip during autoplay
+            // if (isAutoplayEnabled) shouldSkip = true;
     }
-    // Show toast only for unhandled cases or non-autoplay skips
-    showToast(`Player Error: ${errorMsg}`, 'error');
 
-    // Optional: try to play next video or stop? Maybe just stop and hide.
-    // stopVideo();
-    // playerWrapperEl.classList.add('hidden');
+    if (shouldSkip) {
+        showToast(`${errorMsg} Skipping to next video.`, 'error');
+        playNextVideo(); // Skip if autoplaying and flag is set
+    } else {
+        // Show toast only for non-skipped errors or if autoplay is off
+        showToast(`Player Error: ${errorMsg}`, 'error');
+        // Optional: Add link for disallowed videos even when not skipping
+        // if (event.data === 101 || event.data === 150) {
+        //    console.log(`Watch on YouTube: ${videoUrl}`);
+        // }
+        // Optional: Stop/hide player on critical non-skipping errors?
+        // stopVideo();
+        // playerWrapperEl.classList.add('hidden');
+    }
 }
 
 function getCurrentPlayingVideoIdFromApi() {
