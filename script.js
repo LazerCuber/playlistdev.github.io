@@ -784,15 +784,40 @@ function playVideo(videoId) {
     console.log(`playVideo: Attempting to play video ID: ${videoId}`); // Log entry
     // Ensure the player container is visible first
     playerWrapperEl.classList.remove('hidden');
-    // currentlyPlayingVideoId = videoId; // Set this immediately? NO - set it when PLAYING event fires.
     updatePlayingVideoHighlight(videoId); // Highlight the *intended* video immediately
+
+    // --- Signal playback start to Media Session Immediately ---
+    if ('mediaSession' in navigator) {
+        console.log("MediaSession: Setting state to 'playing' (playVideo start)");
+        navigator.mediaSession.playbackState = "playing";
+    }
+     // Update metadata early as well
+     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+     if (currentPlaylist) {
+         const videoData = currentPlaylist.videos.find(v => v.id === videoId);
+         if (videoData) {
+             console.log(`playVideo: Updating Media Session metadata for ${videoData.title}`);
+             updateMediaSessionMetadata(videoData);
+         } else {
+             console.log(`playVideo: Video data not found for ID ${videoId}. Clearing Media Session metadata.`);
+             updateMediaSessionMetadata(null);
+         }
+     } else {
+         console.log("playVideo: Current playlist not found. Clearing Media Session metadata.");
+         updateMediaSessionMetadata(null);
+     }
+    // --- End immediate signaling ---
+
 
     // Check if player is initialized AND ready
     if (ytPlayer && isPlayerReady) {
         console.log(`playVideo: Player ready, calling loadVideoById('${videoId}')`);
         try {
             // Set the potential next ID for state tracking, even before playing starts
-            currentlyPlayingVideoId = videoId;
+             // Note: We now set currentlyPlayingVideoId only when the PLAYING state change event fires,
+             // but we keep track of the *intended* videoId here.
+            // currentlyPlayingVideoId = videoId; // MOVED to onPlayerStateChange
+
             ytPlayer.loadVideoById(videoId);
             // Scroll player into view smoothly, slight delay can help
             setTimeout(() => {
@@ -803,34 +828,22 @@ function playVideo(videoId) {
         } catch (error) {
             console.error("playVideo: Error calling loadVideoById:", error);
             showToast("Failed to load video in player.", "error");
-            stopVideo(); // Reset state if loading fails
+            stopVideo(); // Reset state if loading fails (sets state to 'none')
             playerWrapperEl.classList.add('hidden'); // Hide player if unusable
             videoIdToPlayOnReady = null; // Clear any queue if loading failed
-            currentlyPlayingVideoId = null; // Clear playing ID on error
+            // currentlyPlayingVideoId = null; // stopVideo handles this
         }
     } else {
         // Player not ready or not initialized yet, queue the video ID
         console.log(`playVideo: Player not ready (Player: ${!!ytPlayer}, Ready: ${isPlayerReady}). Queuing video: ${videoId}`);
         videoIdToPlayOnReady = videoId;
-        // Optional: Show a loading state
-        // document.getElementById('player').innerHTML = '<p>Loading player...</p>';
+        // If player isn't ready, the state is 'playing' optimistically based on user intent.
+        // The onPlayerStateChange will confirm/correct this once the player actually starts.
     }
 
-    // Update Media Session Metadata (happens regardless of player readiness)
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (currentPlaylist) {
-        const videoData = currentPlaylist.videos.find(v => v.id === videoId);
-        if (videoData) {
-            console.log(`playVideo: Updating Media Session metadata for ${videoData.title}`);
-            updateMediaSessionMetadata(videoData);
-        } else {
-             console.log(`playVideo: Video data not found for ID ${videoId}. Clearing Media Session metadata.`);
-             updateMediaSessionMetadata(null); // Clear if video data not found
-        }
-    } else {
-        console.log("playVideo: Current playlist not found. Clearing Media Session metadata.");
-        updateMediaSessionMetadata(null); // Clear if playlist not found
-    }
+    // Metadata update moved earlier
+    // const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    // ... (metadata update logic moved up) ...
 }
 
 function stopVideo() {
@@ -1217,18 +1230,24 @@ function setupMediaSessionActionHandlers() {
     console.log("Setting up Media Session Action Handlers");
 
     navigator.mediaSession.setActionHandler('play', () => {
-        // console.log("Media Session: Play");
-        if (ytPlayer && typeof ytPlayer.playVideo === 'function' && isPlayerReady) { // Check isPlayerReady
+        console.log("Media Session Action: Play");
+        if (ytPlayer && typeof ytPlayer.playVideo === 'function' && isPlayerReady) {
             ytPlayer.playVideo();
-             // State update is handled by onPlayerStateChange
+            // --- Set state immediately ---
+            console.log("MediaSession: Setting state to 'playing' (Play Action)");
+            navigator.mediaSession.playbackState = "playing";
+            // --- End immediate state set ---
         }
     });
 
     navigator.mediaSession.setActionHandler('pause', () => {
-        // console.log("Media Session: Pause");
-        if (ytPlayer && typeof ytPlayer.pauseVideo === 'function' && isPlayerReady) { // Check isPlayerReady
+        console.log("Media Session Action: Pause");
+        if (ytPlayer && typeof ytPlayer.pauseVideo === 'function' && isPlayerReady) {
             ytPlayer.pauseVideo();
-            // State update is handled by onPlayerStateChange
+             // --- Set state immediately ---
+            console.log("MediaSession: Setting state to 'paused' (Pause Action)");
+            navigator.mediaSession.playbackState = "paused";
+            // --- End immediate state set ---
         }
     });
 
