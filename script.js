@@ -51,6 +51,9 @@ let touchDraggedElement = null;
 // Pagination State
 const videosPerPage = 20; // Number of videos to show per page
 let currentPage = 1;
+// Web Audio Keep-Alive
+let audioContext = null; // Added for silent audio hack
+let silentSource = null; // Added for silent audio hack
 
 // --- Icons (Replace with actual SVG content or library calls) ---
 const ICONS = {
@@ -347,6 +350,11 @@ function onYouTubeIframeAPIReady() {
 function onPlayerReady(event) {
     console.log("Player Ready");
     isPlayerReady = true;
+
+    // --- Start Silent Audio Hack ---
+    startSilentAudio();
+    // --- End Silent Audio Hack ---
+
     setupMediaSessionActionHandlers(); // Setup handlers once player is ready
     // If a video was requested before the player was ready, play it now
     if (videoIdToPlayOnReady) {
@@ -1389,3 +1397,46 @@ function handleTouchEnd(event) {
 
 // --- Start the app ---
 init();
+
+// Function to initialize and play silent audio
+function startSilentAudio() {
+    if (audioContext) return; // Already started
+
+    try {
+        console.log("Attempting to start silent audio context...");
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Create a buffer source
+        silentSource = audioContext.createBufferSource();
+        // Create a silent buffer (1 second of silence)
+        const buffer = audioContext.createBuffer(1, audioContext.sampleRate * 1, audioContext.sampleRate);
+        silentSource.buffer = buffer;
+        silentSource.loop = true; // Loop the silence
+
+        // Connect to destination (speakers)
+        silentSource.connect(audioContext.destination);
+
+        // Start playing the silent buffer
+        silentSource.start(0);
+        console.log("Silent audio context started successfully.");
+
+        // Optional: Resume context if it gets suspended automatically (common on some browsers)
+        const resumeAudio = () => {
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume().then(() => {
+                    console.log("AudioContext resumed.");
+                }).catch(e => console.error("Error resuming AudioContext:", e));
+            }
+             document.removeEventListener('click', resumeAudio);
+             document.removeEventListener('touchstart', resumeAudio);
+        };
+         document.addEventListener('click', resumeAudio, { once: true });
+         document.addEventListener('touchstart', resumeAudio, { once: true });
+
+
+    } catch (e) {
+        console.error("Web Audio API is not supported or failed to initialize:", e);
+        audioContext = null; // Reset context if failed
+        silentSource = null;
+    }
+}
