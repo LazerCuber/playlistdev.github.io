@@ -524,6 +524,18 @@ function onPlayerStateChange(event) {
             }
             break;
     }
+
+    // Add this after setting metadata:
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = "playing";
+        if ('setPositionState' in navigator.mediaSession) {
+            navigator.mediaSession.setPositionState({
+                duration: ytPlayer.getDuration(),
+                position: ytPlayer.getCurrentTime(),
+                playbackRate: 1
+            });
+        }
+    }
 }
 
 function onPlayerError(event) {
@@ -1221,6 +1233,18 @@ function updateMediaSessionMetadata(video) {
         album: playlistName,
         artwork: artworkUrls
     });
+
+    // Add this after setting metadata:
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = "playing";
+        if ('setPositionState' in navigator.mediaSession) {
+            navigator.mediaSession.setPositionState({
+                duration: ytPlayer.getDuration(),
+                position: ytPlayer.getCurrentTime(),
+                playbackRate: 1
+            });
+        }
+    }
 }
 
 // Update metadata with position information for lock screen
@@ -1449,7 +1473,7 @@ function ensureSilentSource() {
         
         // Use GainNode to ensure silence
         const gainNode = audioContext.createGain();
-        gainNode.gain.value = 0.001; // Very quiet but not completely silent
+        gainNode.gain.value = 0.0001; // Change to 0.0001 for even quieter
         silentSource.connect(gainNode);
         gainNode.connect(audioContext.destination);
         silentSource.start(0);
