@@ -1535,21 +1535,47 @@ function setupMediaSessionActionHandlers() {
 
 // Add this function after setupMediaSessionActionHandlers()
 function handleVisibilityChange() {
-  if (document.hidden && (currentlyPlayingVideoId || intendedVideoId)) {
-    // Page hidden but video was playing - mark for resume when visible
-    document.addEventListener('visibilitychange', attemptResumePlayback, {once: true});
-  }
+    if (document.hidden) {
+        // If the document is hidden, we can pause the video
+        if (currentlyPlayingVideoId) {
+            ytPlayer.pauseVideo();
+        }
+    } else {
+        // If the document is visible again, attempt to resume playback
+        attemptResumePlayback();
+    }
 }
 
+// Modify the attemptResumePlayback function
 function attemptResumePlayback() {
-  if (!document.hidden && (currentlyPlayingVideoId || intendedVideoId)) {
-    ensureAudioContext();
-    setTimeout(() => {
-      if (ytPlayer && isPlayerReady && ytPlayer.getPlayerState() === YT.PlayerState.PAUSED) {
-        ytPlayer.playVideo();
-      }
-    }, 300);
-  }
+    if (currentlyPlayingVideoId) {
+        ensureAudioContext(); // Ensure the audio context is active
+        setTimeout(() => {
+            if (ytPlayer && isPlayerReady) {
+                ytPlayer.playVideo(); // Attempt to play the video
+            }
+        }, 300); // Delay to allow context to be ready
+    }
+}
+
+// Update the onPlayerStateChange function to handle the paused state
+function onPlayerStateChange(event) {
+    const state = event.data;
+
+    switch (state) {
+        case YT.PlayerState.PLAYING:
+            currentlyPlayingVideoId = intendedVideoId;
+            ensureAudioContext(); // Ensure audio context is active
+            requestWakeLock(); // Request wake lock to keep the screen on
+            break;
+        case YT.PlayerState.PAUSED:
+            // Handle paused state if needed
+            break;
+        case YT.PlayerState.ENDED:
+            // Handle video end
+            break;
+        // Other states can be handled as needed
+    }
 }
 
 // Add this function after the attemptResumePlayback function
