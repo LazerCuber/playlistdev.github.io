@@ -574,8 +574,18 @@ function onYouTubeIframeAPIReady() {
     console.log("YT API Ready.");
     if (document.getElementById('player')) {
         ytPlayer = new YT.Player('player', {
-            height: '100%', width: '100%',
-            playerVars: { 'playsinline': 1, 'rel': 0 },
+            height: '100%', 
+            width: '100%',
+            playerVars: { 
+                'playsinline': 1, 
+                'rel': 0,
+                // Add these crucial parameters for background audio playback
+                'enablejsapi': 1,
+                'fs': 0,
+                'modestbranding': 1,
+                'iv_load_policy': 3,
+                'disablekb': 1
+            },
             events: {
                 'onReady': onPlayerReady,
                 'onStateChange': onPlayerStateChange,
@@ -587,6 +597,28 @@ function onYouTubeIframeAPIReady() {
     }
 }
 
+// Add this code after the player is initialized
+function configureBackgroundAudio() {
+    // Create a hidden audio element to keep audio session active
+    const audioElement = document.createElement('audio');
+    audioElement.setAttribute('id', 'background-audio');
+    audioElement.setAttribute('playsinline', 'true');
+    audioElement.setAttribute('webkit-playsinline', 'true');
+    audioElement.setAttribute('loop', 'true');
+    audioElement.src = 'data:audio/mp3;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGFTb25vdGhlcXVlLm9yZwBURU5DAAAAHQAAA1N3aXRjaCBQbHVzIMKpIE5DSCBTb2Z0d2FyZQBUSVQyAAAABgAAAzIyMzUAVFNTRQAAAA8AAANMYXZmNTcuODMuMTAwAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQMSkAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
+    audioElement.volume = 0.001; // Nearly silent, just to keep audio session alive
+    document.body.appendChild(audioElement);
+    
+    // Play the silent audio when a video starts playing to keep iOS audio session active
+    if (ytPlayer && ytPlayer.addEventListener) {
+        ytPlayer.addEventListener('onStateChange', function(e) {
+            if (e.data === YT.PlayerState.PLAYING) {
+                audioElement.play().catch(err => console.log('Silent audio play failed:', err));
+            }
+        });
+    }
+}
+
 function onPlayerReady(event) {
     console.log("Player Ready.");
     isPlayerReady = true;
@@ -594,6 +626,7 @@ function onPlayerReady(event) {
     // This might still be suspended if no user interaction happened yet
     ensureAudioContext();
     setupMediaSessionActionHandlers(); // Setup MediaSession handlers
+    configureBackgroundAudio(); // Add this line
     if (videoIdToPlayOnReady) {
         const videoToPlay = videoIdToPlayOnReady;
         videoIdToPlayOnReady = null;
