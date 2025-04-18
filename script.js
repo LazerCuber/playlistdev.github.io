@@ -53,9 +53,9 @@ let touchDraggedElement = null;
 // Pagination State
 const VIDEOS_PER_PAGE = 20;
 let currentPage = 1;
-// Web Audio Keep-Alive
+// Web Audio Keep-Alive - REINSTATED
 let audioContext = null;
-let silentSource = null;
+let silentSourceNode = null; // Keep track of the silent node
 
 // --- Icons ---
 // (Keep ICONS object as is)
@@ -63,7 +63,7 @@ const ICONS = {
     add: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg>`,
     loading: `<span class="spinner"></span>`,
     rename: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V12h2.293l6.5-6.5z"/></svg>`,
-    delete: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>`,
+    delete: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>`,
     drag: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5z"/></svg>`,
     moon: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg>`,
     sun: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"/></svg>`,
@@ -94,12 +94,9 @@ function init() {
     }
     renderPlaylists(); // Initial playlist render
 
-    // Keep Visibility listener for potential future use or robust audio context handling
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-            startSilentAudio(); // Try to keep context alive when returning to tab
-        }
-    });
+    // Try to create AudioContext early (might start suspended)
+    // User interaction will be needed to properly start/resume it.
+    ensureAudioContext();
 }
 
 // --- Local Storage & State Helpers ---
@@ -137,6 +134,95 @@ function loadSidebarWidth() {
 // --- Helper Function ---
 function getCurrentPlaylist() {
     return playlists.find(p => p.id === currentPlaylistId);
+}
+
+// --- Web Audio Keep-Alive ---
+
+/**
+ * Ensures the AudioContext exists and attempts to resume it if suspended.
+ * Needs to be called in response to user interaction (click, tap) initially.
+ * Returns true if context exists (even if suspended), false otherwise.
+ */
+function ensureAudioContext() {
+    if (!audioContext) {
+        try {
+            // Standard context
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            console.log("AudioContext created. Initial state:", audioContext.state);
+            // If it starts running right away (less common without interaction), play silence.
+            if (audioContext.state === 'running') {
+                playSilentSound();
+            }
+        } catch (e) {
+            console.error("Web Audio API not supported or context creation failed.", e);
+            audioContext = null; // Ensure it's null on failure
+            return false;
+        }
+    }
+
+    // If context exists but is suspended, try to resume it.
+    // This often requires a recent user gesture.
+    if (audioContext && audioContext.state === 'suspended') {
+        console.log("AudioContext suspended. Attempting to resume...");
+        audioContext.resume().then(() => {
+            console.log("AudioContext resumed successfully. State:", audioContext.state);
+            playSilentSound(); // Play silent sound after successful resume
+        }).catch(e => {
+            // This warning is common if resume is called without a direct user action
+            console.warn("Failed to resume AudioContext automatically (may need user interaction):", e);
+        });
+    } else if (audioContext && audioContext.state === 'running') {
+        // If already running, ensure silent sound is playing (it might have stopped unexpectedly)
+        playSilentSound();
+    }
+
+    return !!audioContext; // Return true if context exists
+}
+
+/**
+ * Plays a continuous silent sound loop using the Web Audio API.
+ * Requires the audioContext to be in the 'running' state.
+ */
+function playSilentSound() {
+    if (!audioContext || audioContext.state !== 'running') {
+         // console.log("Cannot play silent sound: AudioContext not running.");
+         return; // Don't proceed if context isn't running
+    }
+
+    // Stop and clear existing node if it exists
+    if (silentSourceNode) {
+        try {
+            silentSourceNode.stop();
+        } catch (e) { /* Might already be stopped or not started */ }
+        silentSourceNode.disconnect();
+        silentSourceNode = null;
+        // console.log("Cleared previous silent node.");
+    }
+
+    // Create a minimal buffer (1 frame)
+    const buffer = audioContext.createBuffer(1, 1, audioContext.sampleRate);
+    // No need to fill with data, it's silent by default
+
+    // Create buffer source
+    silentSourceNode = audioContext.createBufferSource();
+    silentSourceNode.buffer = buffer;
+    silentSourceNode.loop = true; // Loop indefinitely
+
+    // Connect to the output (speakers)
+    silentSourceNode.connect(audioContext.destination);
+
+    // Start playing
+    try {
+        silentSourceNode.start(0);
+        // console.log("Silent audio node started.");
+    } catch (e) {
+        console.error("Error starting silent audio node:", e);
+        // Clear the node reference if starting failed
+        if (silentSourceNode) {
+            silentSourceNode.disconnect();
+            silentSourceNode = null;
+        }
+    }
 }
 
 // --- Event Listeners Setup ---
@@ -195,6 +281,8 @@ function handleVideoGridClick(event) {
     if (event.target.closest('.delete-video-btn')) {
         event.stopPropagation(); handleDeleteVideo(videoId);
     } else if (!event.target.closest('.drag-handle')) { // Don't play if clicking the handle
+        // *** Ensure AudioContext is active on user click BEFORE playing ***
+        ensureAudioContext();
         playVideo(videoId);
     }
 }
@@ -431,7 +519,8 @@ function onYouTubeIframeAPIReady() {
 function onPlayerReady(event) {
     console.log("Player Ready.");
     isPlayerReady = true;
-    startSilentAudio(); // Start silent audio when player is ready
+    // *** Try to ensure context is running when player is ready ***
+    ensureAudioContext();
     setupMediaSessionActionHandlers(); // Setup MediaSession handlers
     if (videoIdToPlayOnReady) {
         const videoToPlay = videoIdToPlayOnReady;
@@ -466,13 +555,14 @@ function onPlayerStateChange(event) {
 
     switch (state) {
         case YT.PlayerState.PLAYING:
-            currentlyPlayingVideoId = intendedVideoId; // Confirm the intended video is now playing
+            currentlyPlayingVideoId = intendedVideoId;
             updatePlayingVideoHighlight(currentlyPlayingVideoId);
-            startSilentAudio(); // Keep context active
+            // *** Ensure context remains active while playing ***
+            ensureAudioContext();
             break;
         case YT.PlayerState.PAUSED:
-            // Keep silent audio running for background resume
-            startSilentAudio();
+            // *** Keep context active even when paused (for background resume) ***
+            ensureAudioContext();
             break;
         case YT.PlayerState.ENDED:
             const endedVideoId = currentlyPlayingVideoId || intendedVideoId;
@@ -480,7 +570,8 @@ function onPlayerStateChange(event) {
             intendedVideoId = null; // Clear intention as video finished naturally
             updatePlayingVideoHighlight(null);
             if (isAutoplayEnabled) {
-                startSilentAudio(); // Ensure context active before next play attempt
+                // *** Ensure context is active before next play attempt ***
+                ensureAudioContext();
                 playNextVideo(endedVideoId);
             } else {
                  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "none";
@@ -768,9 +859,9 @@ function playVideo(videoId) {
     const videoData = currentPlaylist.videos.find(v => v.id === videoId);
     if (!videoData) { console.error(`playVideo: Video ${videoId} not found in playlist.`); return; }
 
-    intendedVideoId = videoId; // Set intention *immediately*
+    intendedVideoId = videoId;
     playerWrapperEl.classList.remove('hidden');
-    updatePlayingVideoHighlight(videoId); // Highlight immediately
+    updatePlayingVideoHighlight(videoId);
 
     // Update Media Session metadata
     if ('mediaSession' in navigator) {
@@ -778,20 +869,30 @@ function playVideo(videoId) {
         navigator.mediaSession.playbackState = "playing"; // Optimistic state
     }
 
-    // Ensure silent audio context is active before playback attempt
-    startSilentAudio();
+    // *** CRITICAL: Ensure AudioContext is active right before playback attempt ***
+    ensureAudioContext();
 
     if (ytPlayer && isPlayerReady) {
         try {
-            ytPlayer.loadVideoById(videoId);
-            // ytPlayer.playVideo(); // Optional: Force play? Usually loadVideoById autoplays if allowed.
+            // Add a small delay IF the audio context might have just been resumed.
+            // This gives the browser a moment to acknowledge the 'running' state.
+            // Adjust delay as needed (0 might be enough, or up to 50-100ms).
+            const delay = (audioContext && audioContext.state === 'running') ? 0 : 50; // Optional delay
+
+            setTimeout(() => {
+                console.log(`Attempting to load video: ${videoId}`);
+                ytPlayer.loadVideoById(videoId);
+                // ytPlayer.playVideo(); // Usually not needed, loadVideoById often autoplays
+            }, delay);
+
         } catch (error) {
             console.error("playVideo: Error calling loadVideoById:", error);
             showToast("Failed to load video.", "error");
             handlePlayerErrorCleanup(videoId); // Use a common cleanup function
         }
     } else {
-        videoIdToPlayOnReady = videoId; // Queue for when player is ready
+        console.log(`Player not ready, queuing video: ${videoId}`);
+        videoIdToPlayOnReady = videoId;
     }
 }
 
@@ -809,6 +910,8 @@ function playNextVideo(previousVideoId) {
 
     // If previous video not found, or no previous ID, play the first video
     if (currentIndex === -1 && currentPlaylist.videos.length > 0) {
+        // *** Ensure context active before playing next ***
+        ensureAudioContext();
         playVideo(currentPlaylist.videos[0].id);
         return;
     }
@@ -818,6 +921,8 @@ function playNextVideo(previousVideoId) {
     const nextVideo = currentPlaylist.videos[nextIndex];
 
     if (nextVideo) {
+         // *** Ensure context active before playing next ***
+        ensureAudioContext();
         playVideo(nextVideo.id);
     } else {
         // Should not happen with modulo logic if list isn't empty
@@ -837,6 +942,8 @@ function playPreviousVideo(currentVideoId) {
 
     // If current video not found, play the last video
     if (currentIndex === -1 && currentPlaylist.videos.length > 0) {
+         // *** Ensure context active before playing previous ***
+        ensureAudioContext();
         playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
         return;
     }
@@ -846,6 +953,8 @@ function playPreviousVideo(currentVideoId) {
     const previousVideo = currentPlaylist.videos[previousIndex];
 
     if (previousVideo) {
+         // *** Ensure context active before playing previous ***
+        ensureAudioContext();
         playVideo(previousVideo.id);
     } else {
         console.error("playPreviousVideo: Could not determine previous video. Stopping.");
@@ -1139,6 +1248,14 @@ function handleClosePlayer() {
         updateMediaSessionMetadata(null); // Clear metadata
         navigator.mediaSession.playbackState = 'none';
     }
+    // Optionally stop the silent sound when player is explicitly closed
+    // if (silentSourceNode) {
+    //     try { silentSourceNode.stop(); } catch(e) {}
+    //     silentSourceNode.disconnect();
+    //     silentSourceNode = null;
+    //     console.log("Silent audio node stopped on player close.");
+    // }
+    // Decide if you want to stop the keep-alive here or let it run
 }
 
 // --- Media Session API ---
@@ -1171,29 +1288,32 @@ function setupMediaSessionActionHandlers() {
 
     const actions = {
         play: () => {
-            startSilentAudio(); // Ensure context active
+            // *** Ensure context active for media session play ***
+            ensureAudioContext();
             if (ytPlayer && isPlayerReady && typeof ytPlayer.playVideo === 'function') {
-                ytPlayer.playVideo();
+                // Add a small delay here too, in case resume was needed
+                setTimeout(() => ytPlayer.playVideo(), 50);
             } else if (intendedVideoId || currentlyPlayingVideoId) {
-                // If player not ready, try re-triggering playVideo for the last intended/playing ID
+                // playVideo already calls ensureAudioContext
                 playVideo(intendedVideoId || currentlyPlayingVideoId);
             }
-             navigator.mediaSession.playbackState = "playing"; // Update state
+             navigator.mediaSession.playbackState = "playing";
         },
         pause: () => {
             if (ytPlayer && isPlayerReady && typeof ytPlayer.pauseVideo === 'function') {
                 ytPlayer.pauseVideo();
             }
-            startSilentAudio(); // Keep context active even when paused
-             navigator.mediaSession.playbackState = "paused"; // Update state
+            // *** Keep context active even when paused via media session ***
+            ensureAudioContext();
+             navigator.mediaSession.playbackState = "paused";
         },
-        stop: () => handleClosePlayer(), // Use existing close handler
+        stop: () => handleClosePlayer(),
         previoustrack: () => {
-            startSilentAudio();
+            // playPreviousVideo already calls ensureAudioContext
             playPreviousVideo(currentlyPlayingVideoId || intendedVideoId);
         },
         nexttrack: () => {
-            startSilentAudio();
+            // playNextVideo already calls ensureAudioContext
             playNextVideo(currentlyPlayingVideoId || intendedVideoId);
         }
     };
@@ -1207,95 +1327,6 @@ function setupMediaSessionActionHandlers() {
         }
     });
 }
-
-// --- Silent Audio Hack ---
-// (Keep startSilentAudio and manageSilentSource, but reduce logging)
-function startSilentAudio() {
-    if (!(window.AudioContext || window.webkitAudioContext)) return;
-
-    const resumeAudio = () => {
-        if (audioContext && audioContext.state === 'suspended') {
-            // console.log("Attempting to resume AudioContext..."); // Keep commented unless debugging
-            audioContext.resume().then(() => {
-                // console.log("AudioContext resumed."); // Keep commented unless debugging
-                manageSilentSource();
-            }).catch(e => console.error("Error resuming AudioContext:", e));
-        }
-        // Clean up listeners after first interaction attempt
-        ['click', 'touchstart', 'keydown'].forEach(evt =>
-            document.removeEventListener(evt, resumeAudio, { capture: true })
-        );
-    };
-
-    if (!audioContext || audioContext.state === 'closed') {
-        try {
-            // console.log("Creating new AudioContext."); // Keep commented unless debugging
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            silentSource = null;
-            audioContext.onstatechange = () => {
-                 // console.log("AudioContext state:", audioContext.state); // Keep commented unless debugging
-                if (audioContext.state === 'suspended') {
-                    ['click', 'touchstart', 'keydown'].forEach(evt => {
-                         document.removeEventListener(evt, resumeAudio, { capture: true }); // Remove first
-                         document.addEventListener(evt, resumeAudio, { once: true, capture: true });
-                    });
-                } else if (audioContext.state === 'running') {
-                     manageSilentSource(); // Ensure source is running after resume/initial start
-                }
-            };
-        } catch (e) {
-            console.error("Web Audio API init failed:", e);
-            audioContext = null; return;
-        }
-    }
-
-    if (audioContext.state === 'suspended') {
-        audioContext.resume().catch(() => { // Try immediate resume
-            // console.log("Immediate resume failed, adding interaction listeners."); // Keep commented unless debugging
-            ['click', 'touchstart', 'keydown'].forEach(evt => {
-                document.removeEventListener(evt, resumeAudio, { capture: true }); // Remove first
-                document.addEventListener(evt, resumeAudio, { once: true, capture: true });
-            });
-        });
-        return; // Don't manage source until resumed
-    }
-
-    if (audioContext.state === 'running') {
-        manageSilentSource();
-    }
-}
-
-function manageSilentSource() {
-    if (!audioContext || audioContext.state !== 'running') return;
-
-    // Stop existing source if it exists and is playing/scheduled
-    if (silentSource) {
-        try {
-            silentSource.stop();
-            silentSource.disconnect();
-        } catch (e) { /* Ignore errors */ }
-        silentSource = null;
-    }
-
-    // Create and start a new silent buffer source
-    try {
-        silentSource = audioContext.createBufferSource();
-        const buffer = audioContext.createBuffer(1, audioContext.sampleRate * 1, audioContext.sampleRate); // 1 sec silent buffer
-        silentSource.buffer = buffer;
-        silentSource.loop = true;
-        silentSource.connect(audioContext.destination);
-        // Use GainNode to ensure silence (optional but safer)
-        // const gainNode = audioContext.createGain();
-        // gainNode.gain.value = 0;
-        // silentSource.connect(gainNode);
-        // gainNode.connect(audioContext.destination);
-        silentSource.start(0);
-    } catch (e) {
-        console.error("Could not create/start silent audio source:", e);
-        silentSource = null;
-    }
-}
-
 
 // --- Start the app ---
 init();
