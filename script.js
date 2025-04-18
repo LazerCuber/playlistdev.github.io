@@ -643,32 +643,26 @@ function onPlayerStateChange(event) {
     if ('mediaSession' in navigator) {
         switch (state) {
             case YT.PlayerState.PLAYING:
-            case YT.PlayerState.BUFFERING: // Treat buffering as playing for media session
                 navigator.mediaSession.playbackState = "playing";
                 break;
             case YT.PlayerState.PAUSED:
                 navigator.mediaSession.playbackState = "paused";
                 break;
             case YT.PlayerState.ENDED:
-            case YT.PlayerState.CUED: // Cued is ambiguous, maybe paused? Or none if nothing was intended?
-            case YT.PlayerState.UNSTARTED:
-            default:
-                 navigator.mediaSession.playbackState = "none";
-                 break; // Let specific logic below handle state more granularly if needed
+                navigator.mediaSession.playbackState = "none";
+                break;
+            // Handle other states as needed
         }
     }
-
 
     switch (state) {
         case YT.PlayerState.PLAYING:
             currentlyPlayingVideoId = intendedVideoId;
-            updatePlayingVideoHighlight(currentlyPlayingVideoId);
-            ensureAudioContext();
-            requestWakeLock();
+            updateMediaSessionMetadata(currentlyPlayingVideo); // Ensure this is called
+            navigator.mediaSession.playbackState = "playing";
             break;
         case YT.PlayerState.PAUSED:
-            // *** Keep context active even when paused (for background resume) ***
-            ensureAudioContext();
+            navigator.mediaSession.playbackState = "paused";
             break;
         case YT.PlayerState.ENDED:
             const endedVideoId = currentlyPlayingVideoId || intendedVideoId;
@@ -1456,23 +1450,16 @@ function updateMediaSessionMetadata(video) {
 
     if (!video) {
         navigator.mediaSession.metadata = null;
-        // State is handled elsewhere (stopVideo, onStateChange)
         return;
     }
-
-    const currentPlaylist = getCurrentPlaylist();
-    const playlistName = currentPlaylist ? currentPlaylist.name : 'Playlist';
 
     navigator.mediaSession.metadata = new MediaMetadata({
         title: video.title,
         artist: 'YouTube', // Simplified
-        album: playlistName,
+        album: 'Your Playlist Name', // Update this as needed
         artwork: [
-            // Provide multiple sizes, browser picks best
-            { src: video.thumbnail.replace('mqdefault.jpg', 'maxresdefault.jpg'), sizes: '1280x720', type: 'image/jpeg' },
-            { src: video.thumbnail.replace('mqdefault.jpg', 'sddefault.jpg'), sizes: '640x480', type: 'image/jpeg' },
-            { src: video.thumbnail.replace('mqdefault.jpg', 'hqdefault.jpg'), sizes: '480x360', type: 'image/jpeg' },
-            { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' }, // mqdefault
+            { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' },
+            // Add more sizes if available
         ]
     });
 }
@@ -1565,14 +1552,14 @@ function onPlayerStateChange(event) {
     switch (state) {
         case YT.PlayerState.PLAYING:
             currentlyPlayingVideoId = intendedVideoId;
-            ensureAudioContext(); // Ensure audio context is active
-            requestWakeLock(); // Request wake lock to keep the screen on
+            updateMediaSessionMetadata(currentlyPlayingVideo); // Ensure this is called
+            navigator.mediaSession.playbackState = "playing";
             break;
         case YT.PlayerState.PAUSED:
-            // Handle paused state if needed
+            navigator.mediaSession.playbackState = "paused";
             break;
         case YT.PlayerState.ENDED:
-            // Handle video end
+            navigator.mediaSession.playbackState = "none";
             break;
         // Other states can be handled as needed
     }
