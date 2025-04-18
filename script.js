@@ -377,39 +377,44 @@ function onPlayerReady(event) {
 
 function onPlayerStateChange(event) {
     const state = event.data;
-    // console.log("Player state changed:", state); // Removed verbose log
+    // console.log("Player state changed:", state, "Intended:", intendedVideoId, "Current:", currentlyPlayingVideoId); // Debugging log
 
     if (state === YT.PlayerState.PLAYING) {
-        // console.log("Player state: PLAYING"); // Removed verbose log
-        currentlyPlayingVideoId = intendedVideoId;
+        currentlyPlayingVideoId = intendedVideoId; // Confirm the video ID when playback starts
         updatePlayingVideoHighlight(currentlyPlayingVideoId);
         if ('mediaSession' in navigator) {
-            navigator.mediaSession.playbackState = "playing";
+            navigator.mediaSession.playbackState = "playing"; // Ensure state is playing
         }
-         startSilentAudio(); // Ensure silent audio is running
+        startSilentAudio(); // Ensure silent audio is running
 
     } else if (state === YT.PlayerState.PAUSED) {
-        // console.log("Player state: PAUSED"); // Removed verbose log
         if ('mediaSession' in navigator) {
-            navigator.mediaSession.playbackState = "paused";
+            navigator.mediaSession.playbackState = "paused"; // Set state to paused
         }
     } else if (state === YT.PlayerState.ENDED) {
-        // console.log(`Player state: ENDED. Video ended: ${currentlyPlayingVideoId || intendedVideoId}. Autoplay enabled: ${isAutoplayEnabled}. Page Visibility: ${document.visibilityState}`); // Removed verbose log
-        const endedVideoId = currentlyPlayingVideoId || intendedVideoId;
+        const endedVideoId = currentlyPlayingVideoId || intendedVideoId; // Use whichever ID is available
         currentlyPlayingVideoId = null;
-        intendedVideoId = null;
+        intendedVideoId = null; // Clear intended ID too
         updatePlayingVideoHighlight(null);
         if ('mediaSession' in navigator) {
-            navigator.mediaSession.playbackState = "none";
+            navigator.mediaSession.playbackState = "none"; // Set state to none
         }
         if (isAutoplayEnabled) {
-            // console.log("Attempting to play next video after end..."); // Removed verbose log
-            playNextVideo(endedVideoId);
+            playNextVideo(endedVideoId); // Immediately try to play the next video
         }
     } else if (state === YT.PlayerState.BUFFERING) {
-        // console.log("Player state: BUFFERING"); // Removed verbose log
+        // **Keep Media Session state as 'playing' during buffering**
+        if ('mediaSession' in navigator) {
+            // We want the lock screen controls to remain active during buffering
+            // If the previous state wasn't already 'playing', we might set it here,
+            // but usually, buffering happens after a play command.
+            // Let's avoid changing it *from* playing here.
+            // navigator.mediaSession.playbackState = "playing"; // Avoid setting explicitly if it might override a deliberate pause? Let's stick with just updating on PLAYING/PAUSED/ENDED for now.
+        }
     } else if (state === YT.PlayerState.CUED) {
-        // console.log("Player state: CUED"); // Removed verbose log
+        // Video is ready, but not playing. Could happen after loadVideoById before playVideo.
+        // Might indicate a pause or stop state for Media Session?
+        // Let's not change state here for now to avoid conflicting signals.
     }
 }
 
@@ -421,15 +426,12 @@ function onPlayerError(event) {
     const videoUrl = erroredVideoId ? `https://www.youtube.com/watch?v=${erroredVideoId}` : 'Unknown video';
     console.error(`Error occurred for video URL: ${videoUrl}`); // Keep error log
 
-    // --- Media Session Error Handling ---
-    // Reset player/session state robustly on error
+    // Reset player/session state
     if ('mediaSession' in navigator) {
         // console.log("MediaSession: Setting state to 'none' (Player Error)"); // Removed verbose log
         navigator.mediaSession.playbackState = 'none';
-        updateMediaSessionMetadata(null); // Clear metadata on error
     }
-    // --- End Media Session Error Handling ---
-    updatePlayingVideoHighlight(null); // Clear visual highlight
+    updatePlayingVideoHighlight(null);
 
     let shouldSkip = false;
 
@@ -445,10 +447,9 @@ function onPlayerError(event) {
 
     if (isAutoplayEnabled && shouldSkip && erroredVideoId) {
         showToast(`Skipping to next video.`, 'info', 4000); // Keep toast feedback
-        setTimeout(() => playNextVideo(erroredVideoId), 500); // Attempt to autoplay next
+        setTimeout(() => playNextVideo(erroredVideoId), 500);
     } else {
-        intendedVideoId = null; // Clear intent if not skipping
-        currentlyPlayingVideoId = null; // Ensure consistency
+        intendedVideoId = null;
     }
 }
 
@@ -456,6 +457,7 @@ function onPlayerError(event) {
 // function getCurrentPlayingVideoIdFromApi() { ... }
 
 function playNextVideo(previousVideoId) {
+    startSilentAudio(); // Ensure audio context is active before attempting next playback
     // console.log(`playNextVideo: Called. Trying to advance from video ID: ${previousVideoId || 'N/A'}. Page Visibility: ${document.visibilityState}`); // Removed verbose log
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     if (!currentPlaylist || currentPlaylist.videos.length < 1) {
@@ -497,7 +499,7 @@ function playNextVideo(previousVideoId) {
 
     if (nextVideo) {
         // console.log(`playNextVideo: Playing next video: ${nextVideo.title} (ID: ${nextVideo.id}, Index: ${nextIndex})`); // Removed verbose log
-        playVideo(nextVideo.id);
+        playVideo(nextVideo.id); // This will handle media session updates for the next video
     } else {
         console.error(`playNextVideo: Could not find next video data at index ${nextIndex}. Stopping.`); // Keep error log
         stopVideo();
@@ -795,65 +797,63 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
 }
 
 function playVideo(videoId) {
-    // console.log(`playVideo: Attempting to play video ID: ${videoId}. Page Visibility: ${document.visibilityState}`); // Removed verbose log
+    // console.log(`playVideo: Attempting to play video ID: ${videoId}. Player Ready: ${isPlayerReady}`); // Debug log
     if (!videoId) {
         console.error("playVideo called with null or undefined videoId."); // Keep error log
         return;
     }
 
-    // Ensure silent audio is active BEFORE loading/playing (Crucial for background)
-    startSilentAudio();
-
-    intendedVideoId = videoId; // Set intent early
-
-    playerWrapperEl.classList.remove('hidden');
-    updatePlayingVideoHighlight(videoId); // Update visual cue immediately
+    // --- Preemptive Actions ---
+    startSilentAudio(); // Ensure silent audio context is active *before* loading/playing
+    intendedVideoId = videoId; // Set the intended video ID immediately
 
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
 
-    // --- Media Session Update - Moved Earlier ---
-    // Signal playback start and update metadata Immediately to improve lock screen responsiveness
+    // **Update Media Session Immediately**
     if ('mediaSession' in navigator) {
-        // console.log("MediaSession: Setting state to 'playing' (playVideo start)"); // Keep log for debugging this specific change
         if (videoData) {
-            updateMediaSessionMetadata(videoData);
+            updateMediaSessionMetadata(videoData); // Set metadata for the target video
         } else {
-            // Clear metadata if video data somehow not found, though unlikely here
-            updateMediaSessionMetadata(null);
+            updateMediaSessionMetadata(null); // Clear if data is missing (shouldn't happen ideally)
         }
-        // Set state to playing optimistically. It will be corrected by onPlayerStateChange if needed.
+        // Set state to playing optimistically. The player state change handler will confirm later.
         navigator.mediaSession.playbackState = "playing";
+        // console.log(`MediaSession: Set state to 'playing' & updated metadata for ${videoId} (Preemptive in playVideo)`); // Debug log
     }
-    // --- End Media Session Update ---
+    // --- End Preemptive Actions ---
+
+    playerWrapperEl.classList.remove('hidden'); // Show player wrapper
+    updatePlayingVideoHighlight(videoId); // Highlight the video card
 
     // Check if player is initialized AND ready
     if (ytPlayer && isPlayerReady) {
-        // console.log(`playVideo: Player ready, calling loadVideoById('${videoId}')`); // Removed verbose log
+        // console.log(`playVideo: Player ready, calling loadVideoById('${videoId}')`); // Debug log
         try {
+            // Load and automatically play the video.
+            // The 'playVideo' function isn't strictly necessary after 'loadVideoById'
+            // if the player is already initialized, but loadVideoById handles loading *and* starting.
             ytPlayer.loadVideoById(videoId);
-            // The player events (onStateChange) will handle further media session state updates (playing, paused)
+
         } catch (error) {
             console.error("playVideo: Error calling loadVideoById:", error); // Keep error log
             showToast("Failed to load video in player.", "error"); // Keep toast feedback
-            // --- Error Handling: Clear Media Session ---
             if ('mediaSession' in navigator) {
-                // console.log("MediaSession: Setting state to 'none' (playVideo load error)"); // Keep log for debugging
-                navigator.mediaSession.playbackState = 'none';
-                 updateMediaSessionMetadata(null); // Clear metadata on error
+                navigator.mediaSession.playbackState = 'none'; // Reset state on error
+                updateMediaSessionMetadata(null); // Clear metadata on error
             }
             updatePlayingVideoHighlight(null);
             playerWrapperEl.classList.add('hidden');
             intendedVideoId = null;
-            currentlyPlayingVideoId = null; // Ensure consistency
+            currentlyPlayingVideoId = null;
             videoIdToPlayOnReady = null;
-            // --- End Error Handling ---
         }
     } else {
         // Player not ready or not initialized yet, queue the video ID
-        // console.log(`playVideo: Player not ready (Player: ${!!ytPlayer}, Ready: ${isPlayerReady}). Queuing video: ${videoId}`); // Removed verbose log
+        // console.log(`playVideo: Player not ready or not initialized. Queuing video: ${videoId}`); // Debug log
         videoIdToPlayOnReady = videoId;
-        // Media session was already updated optimistically above
+        // We already updated media session metadata/state above, so the lock screen
+        // *should* reflect the intended video even while the player loads.
     }
 }
 
@@ -861,18 +861,22 @@ function stopVideo() {
     // console.log("stopVideo called."); // Removed verbose log
     if (ytPlayer && typeof ytPlayer.stopVideo === 'function') {
         try {
-            ytPlayer.stopVideo();
+             // Prevent errors if called when player isn't fully functional
+             if (ytPlayer.getPlayerState() !== YT.PlayerState.UNSTARTED && ytPlayer.getPlayerState() !== -1) {
+                 ytPlayer.stopVideo();
+             }
         } catch (e) {
             console.warn("Error calling ytPlayer.stopVideo():", e); // Keep warning
         }
     }
     currentlyPlayingVideoId = null;
     intendedVideoId = null;
-    videoIdToPlayOnReady = null;
+    videoIdToPlayOnReady = null; // Clear any queued video
     updatePlayingVideoHighlight(null);
     if ('mediaSession' in navigator) {
-        // console.log("MediaSession: Setting state to 'none' (stopVideo)"); // Removed verbose log
+        // console.log("MediaSession: Setting state to 'none' and clearing metadata (stopVideo)"); // Debug log
         navigator.mediaSession.playbackState = 'none';
+        updateMediaSessionMetadata(null); // Clear metadata on stop
     }
 }
 
@@ -1150,16 +1154,15 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 function handleClosePlayer() {
-    // console.log("handleClosePlayer called."); // Removed verbose log
+    console.log("handleClosePlayer called.");
     stopVideo(); // stopVideo now handles clearing state and highlight
     playerWrapperEl.classList.add('hidden');
-    // --- Media Session Cleanup ---
     if ('mediaSession' in navigator) {
-        // console.log("MediaSession: Clearing metadata & state (handleClosePlayer)"); // Keep log for debugging
-        updateMediaSessionMetadata(null); // Clear metadata
-        navigator.mediaSession.playbackState = 'none'; // Ensure state is none
+        console.log("MediaSession: Clearing metadata (handleClosePlayer)");
+        updateMediaSessionMetadata(null); // Clear metadata as well
+        // Ensure state is none
+        navigator.mediaSession.playbackState = 'none';
     }
-    // --- End Media Session Cleanup ---
 }
 
 function renderPaginationControls(totalVideos, totalPages) {
@@ -1239,68 +1242,77 @@ function updateMediaSessionMetadata(video) {
 function setupMediaSessionActionHandlers() {
      if (!('mediaSession' in navigator)) return;
 
-    // Clear previous handlers
+    // Clear previous handlers (important!)
     navigator.mediaSession.setActionHandler('play', null);
     navigator.mediaSession.setActionHandler('pause', null);
     navigator.mediaSession.setActionHandler('stop', null);
     navigator.mediaSession.setActionHandler('previoustrack', null);
     navigator.mediaSession.setActionHandler('nexttrack', null);
 
-    // console.log("Setting up Media Session Action Handlers"); // Removed verbose log
+    // console.log("Setting up Media Session Action Handlers"); // Debug log
 
     navigator.mediaSession.setActionHandler('play', () => {
-        // console.log("Media Session Action: Play"); // Removed verbose log
-        const videoToPlayId = intendedVideoId || currentlyPlayingVideoId;
+        // console.log("Media Session Action: Play"); // Debug log
+        startSilentAudio(); // Ensure audio context is active before trying to play
+        const videoToPlayId = intendedVideoId || currentlyPlayingVideoId; // Prefer intended ID if player is loading
         if (ytPlayer && typeof ytPlayer.playVideo === 'function' && isPlayerReady) {
-            // console.log("MediaSession: Setting state to 'playing' (Play Action)"); // Removed verbose log
-            navigator.mediaSession.playbackState = "playing";
-            ytPlayer.playVideo();
+             // console.log("MediaSession: Handling 'play' action - Player ready, calling ytPlayer.playVideo()"); // Debug log
+             navigator.mediaSession.playbackState = "playing"; // Optimistically set state
+             ytPlayer.playVideo();
         } else if (videoToPlayId) {
-             // console.log("Media Session: Setting state to 'playing' (Play Action - Player Not Ready/No Video Playing)"); // Removed verbose log
-             navigator.mediaSession.playbackState = "playing";
-             playVideo(videoToPlayId);
+             // If player isn't ready, or wasn't playing, try initiating via playVideo
+             // console.log(`MediaSession: Handling 'play' action - Player not ready or no current video. Calling playVideo(${videoToPlayId})`); // Debug log
+             navigator.mediaSession.playbackState = "playing"; // Optimistically set state
+             playVideo(videoToPlayId); // This will handle queuing if needed
         } else {
-            // console.log("Media Session Action: Play - No video context found."); // Removed verbose log
-             navigator.mediaSession.playbackState = "none";
+            // No video context, can't play anything.
+             console.log("Media Session Action: Play - No video context found."); // Keep log
+             navigator.mediaSession.playbackState = "none"; // Set state to none
         }
     });
 
     navigator.mediaSession.setActionHandler('pause', () => {
-        // console.log("Media Session Action: Pause"); // Removed verbose log
-        // console.log("MediaSession: Setting state to 'paused' (Pause Action)"); // Removed verbose log
+        // console.log("Media Session Action: Pause"); // Debug log
+        // We MUST set the state here, even if the player call fails or is delayed
         navigator.mediaSession.playbackState = "paused";
         if (ytPlayer && typeof ytPlayer.pauseVideo === 'function' && isPlayerReady) {
+             // console.log("MediaSession: Handling 'pause' action - Player ready, calling ytPlayer.pauseVideo()"); // Debug log
             ytPlayer.pauseVideo();
         } else {
-             // console.log("Media Session Action: Pause - Player not ready or no video playing."); // Removed verbose log
+             // console.log("Media Session Action: Pause - Player not ready or no video playing."); // Debug log
+             // State is already set to paused above.
         }
     });
 
     navigator.mediaSession.setActionHandler('stop', () => {
-        // console.log("Media Session Action: Stop"); // Removed verbose log
-        handleClosePlayer();
+        // console.log("Media Session Action: Stop"); // Debug log
+        handleClosePlayer(); // This handles player stop and media session state/metadata clearing
     });
 
     navigator.mediaSession.setActionHandler('previoustrack', () => {
-        // console.log("Media Session Action: Previous Track"); // Removed verbose log
-        const referenceVideoId = intendedVideoId || currentlyPlayingVideoId;
+        // console.log("Media Session Action: Previous Track"); // Debug log
+        startSilentAudio(); // Ensure audio context is active
+        const referenceVideoId = intendedVideoId || currentlyPlayingVideoId; // Use intended if available (e.g., during load)
         if (!referenceVideoId) {
              console.warn("PreviousTrack action: No current or intended video ID found."); // Keep warning
              const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+             // Attempt to play the last video in the playlist if there's no reference
              if (currentPlaylist && currentPlaylist.videos.length > 0) {
                  playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
              }
              return;
         }
-        playPreviousVideo(referenceVideoId);
+        playPreviousVideo(referenceVideoId); // Implement playPreviousVideo similarly to playNextVideo if needed
     });
 
     navigator.mediaSession.setActionHandler('nexttrack', () => {
-        // console.log("Media Session Action: Next Track"); // Removed verbose log
-         const referenceVideoId = intendedVideoId || currentlyPlayingVideoId;
+        // console.log("Media Session Action: Next Track"); // Debug log
+        startSilentAudio(); // Ensure audio context is active
+         const referenceVideoId = intendedVideoId || currentlyPlayingVideoId; // Use intended if available
          if (!referenceVideoId) {
              console.warn("NextTrack action: No current or intended video ID found."); // Keep warning
              const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+             // Attempt to play the first video if there's no reference
              if (currentPlaylist && currentPlaylist.videos.length > 0) {
                  playVideo(currentPlaylist.videos[0].id);
              }
@@ -1308,6 +1320,56 @@ function setupMediaSessionActionHandlers() {
          }
         playNextVideo(referenceVideoId);
     });
+}
+
+// --- Add playPreviousVideo function ---
+function playPreviousVideo(currentVideoId) {
+    startSilentAudio(); // Ensure audio context is active
+    // console.log(`playPreviousVideo: Called. Trying to go back from video ID: ${currentVideoId || 'N/A'}.`); // Debug log
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    if (!currentPlaylist || currentPlaylist.videos.length < 1) {
+        stopVideo();
+        handleClosePlayer();
+        return;
+    }
+
+    let currentIndex = -1;
+    if (currentVideoId) {
+        currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentVideoId);
+    }
+
+    if (currentIndex === -1 && currentVideoId) {
+        console.warn(`playPreviousVideo: Current video ID "${currentVideoId}" not found. Playing last video.`); // Keep warning
+        if (currentPlaylist.videos.length > 0) {
+            playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
+        } else {
+            stopVideo();
+            handleClosePlayer();
+        }
+        return;
+    } else if (currentIndex === -1 && !currentVideoId) {
+         // If no current video, "previous" means the last one in the list
+         if (currentPlaylist.videos.length > 0) {
+            playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
+         } else {
+            stopVideo();
+            handleClosePlayer();
+         }
+         return;
+     }
+
+    // Calculate previous index, wrapping around to the end
+    const prevIndex = (currentIndex - 1 + currentPlaylist.videos.length) % currentPlaylist.videos.length;
+    const prevVideo = currentPlaylist.videos[prevIndex];
+
+    if (prevVideo) {
+        // console.log(`playPreviousVideo: Playing previous video: ${prevVideo.title} (ID: ${prevVideo.id}, Index: ${prevIndex})`); // Debug log
+        playVideo(prevVideo.id);
+    } else {
+        console.error(`playPreviousVideo: Could not find previous video data at index ${prevIndex}. Stopping.`); // Keep error log
+        stopVideo();
+        handleClosePlayer();
+    }
 }
 
 // --- Touch Drag and Drop Handlers ---
@@ -1406,7 +1468,7 @@ init();
 // Function to initialize and play silent audio (Enhanced Resume Logic)
 function startSilentAudio() {
     if (!(window.AudioContext || window.webkitAudioContext)) {
-        // console.warn("Web Audio API not supported. Silent audio hack disabled."); // Keep warning - Reduced verbosity
+        console.warn("Web Audio API not supported. Silent audio hack disabled."); // Keep warning
         return;
     }
 
@@ -1415,97 +1477,108 @@ function startSilentAudio() {
             // console.log("Attempting to resume suspended AudioContext via user interaction..."); // Removed verbose log
             audioContext.resume().then(() => {
                 // console.log("AudioContext resumed successfully by user interaction. State:", audioContext.state); // Removed verbose log
-                // After successful resume, *ensure* the silent audio is playing
                 startSilentAudio();
             }).catch(e => console.error("Error resuming AudioContext via user interaction:", e)); // Keep error log
         }
-        // Remove listeners after first interaction attempt
-        document.removeEventListener('click', resumeAudio, { capture: true });
-        document.removeEventListener('touchstart', resumeAudio, { capture: true });
-        document.removeEventListener('keydown', resumeAudio, { capture: true });
     };
 
-    const addInteractionListeners = () => {
-        // console.log("Adding interaction listeners for AudioContext resume."); // Removed verbose log
+    if (audioContext && audioContext.state !== 'closed') {
+        if (audioContext.state === 'suspended') {
+            // console.log("Silent audio context exists but suspended, attempting resume..."); // Removed verbose log
+            audioContext.resume().then(() => {
+                // console.log("AudioContext resumed successfully via startSilentAudio call. State:", audioContext.state); // Removed verbose log
+                 if (silentSource && audioContext.state === 'running') {
+                    try {
+                        // console.log("Restarting silent source after programmatic resume..."); // Removed verbose log
+                        silentSource.stop();
+                        silentSource.disconnect();
+                        silentSource = audioContext.createBufferSource();
+                        const buffer = audioContext.createBuffer(1, 2, audioContext.sampleRate);
+                        silentSource.buffer = buffer;
+                        silentSource.loop = true;
+                        silentSource.connect(audioContext.destination);
+                        silentSource.start(0);
+                     } catch (e) {
+                         console.error("Failed to restart silent source after programmatic resume:", e); // Keep error log
+                     }
+                 }
+            }).catch(e => {
+                console.error("Error resuming existing AudioContext:", e); // Keep error log
+                // console.log("Programmatic resume failed, ensuring interaction listeners are present."); // Removed verbose log
+                document.removeEventListener('click', resumeAudio, { capture: true });
+                document.removeEventListener('touchstart', resumeAudio, { capture: true });
+                document.removeEventListener('keydown', resumeAudio, { capture: true });
+                document.addEventListener('click', resumeAudio, { once: true, capture: true });
+                document.addEventListener('touchstart', resumeAudio, { once: true, capture: true });
+                document.addEventListener('keydown', resumeAudio, { once: true, capture: true });
+            });
+        } else {
+             if (!silentSource) {
+                 // console.log("Audio context running, but silent source missing. Recreating source."); // Removed verbose log
+             } else {
+                 return;
+             }
+        }
+    } else {
+         try {
+             // console.log("Attempting to create new silent audio context..."); // Removed verbose log
+             audioContext = new (window.AudioContext || window.webkitAudioContext)();
+             // console.log("New AudioContext created. Initial state:", audioContext.state); // Removed verbose log
+             silentSource = null;
+         } catch (e) {
+             console.error("Web Audio API is not supported or failed to initialize:", e); // Keep error log
+             audioContext = null;
+             silentSource = null;
+             return;
+         }
+    }
+
+     if (!silentSource || (audioContext && audioContext.state === 'running')) {
+        try {
+            if (silentSource) {
+                try { silentSource.stop(); } catch(e) { /* ignore */ }
+                try { silentSource.disconnect(); } catch(e) { /* ignore */ }
+            }
+
+            // console.log("Creating/Recreating silent audio buffer source."); // Removed verbose log
+            silentSource = audioContext.createBufferSource();
+            const sampleRate = audioContext.sampleRate;
+            const buffer = audioContext.createBuffer(1, sampleRate * 1, sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < data.length; i++) { data[i] = 0; }
+
+            silentSource.buffer = buffer;
+            silentSource.loop = true;
+            silentSource.connect(audioContext.destination);
+
+            silentSource.start(0);
+            // console.log("Silent audio source started/restarted."); // Removed verbose log
+
+        } catch (startError) {
+            console.warn("Could not start silent audio source immediately:", startError.message); // Keep warning
+            silentSource = null;
+            if (audioContext.state === 'suspended') {
+                 // console.log("Audio start failed while context suspended. Adding interaction listeners."); // Removed verbose log
+                 document.removeEventListener('click', resumeAudio, { capture: true });
+                 document.removeEventListener('touchstart', resumeAudio, { capture: true });
+                 document.removeEventListener('keydown', resumeAudio, { capture: true });
+                 document.addEventListener('click', resumeAudio, { once: true, capture: true });
+                 document.addEventListener('touchstart', resumeAudio, { once: true, capture: true });
+                 document.addEventListener('keydown', resumeAudio, { once: true, capture: true });
+            }
+        }
+     }
+
+    if (audioContext && audioContext.state === 'suspended') {
+        // console.log("AudioContext is suspended, ensuring interaction listeners are present for resume."); // Removed verbose log
         document.removeEventListener('click', resumeAudio, { capture: true });
         document.removeEventListener('touchstart', resumeAudio, { capture: true });
         document.removeEventListener('keydown', resumeAudio, { capture: true });
         document.addEventListener('click', resumeAudio, { once: true, capture: true });
         document.addEventListener('touchstart', resumeAudio, { once: true, capture: true });
         document.addEventListener('keydown', resumeAudio, { once: true, capture: true });
-    };
-
-    // 1. Initialize AudioContext if needed
-    if (!audioContext || audioContext.state === 'closed') {
-        try {
-            // console.log("Attempting to create new silent audio context..."); // Removed verbose log
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            // console.log("New AudioContext created. Initial state:", audioContext.state); // Removed verbose log
-            silentSource = null; // Ensure source is reset
-        } catch (e) {
-            console.error("Web Audio API is not supported or failed to initialize:", e); // Keep error log
-            audioContext = null;
-            silentSource = null;
-            return; // Cannot proceed
-        }
-    }
-
-    // 2. Handle Suspended State (Needs User Interaction or Programmatic Resume)
-    if (audioContext.state === 'suspended') {
-        // console.log("AudioContext is suspended. Attempting programmatic resume..."); // Removed verbose log
-        audioContext.resume().then(() => {
-            // console.log("AudioContext resumed programmatically. State:", audioContext.state); // Removed verbose log
-            // If resume succeeded, proceed to ensure silent audio is playing
-            if (audioContext.state === 'running') {
-                startSilentAudio(); // Re-call to ensure source is started
-            }
-        }).catch(e => {
-            // Programmatic resume failed (likely needs user interaction)
-            // console.warn("Programmatic resume failed (may need user interaction). Adding listeners.", e); // Keep warning
-            addInteractionListeners();
-        });
-        // Don't try to start source yet if suspended
-        return;
-    }
-
-    // 3. Handle Running State (Ensure Silent Source is Playing)
-    if (audioContext.state === 'running') {
-        // Check if source exists and is still valid (connected)
-        // A simple check: If silentSource exists, assume it might be okay,
-        // but it's safer to stop/disconnect/recreate if unsure. Let's try recreating.
-        if (silentSource) {
-             try {
-                // console.log("Stopping existing silent source before recreating..."); // Removed verbose log
-                silentSource.stop();
-                silentSource.disconnect();
-             } catch(e) { /* Ignore errors stopping/disconnecting old source */ }
-             silentSource = null; // Force recreation
-        }
-
-
-        if (!silentSource) {
-             // console.log("AudioContext running. Creating/Recreating silent audio buffer source."); // Removed verbose log
-             try {
-                silentSource = audioContext.createBufferSource();
-                // Use a very short buffer, 1 sample is enough
-                const buffer = audioContext.createBuffer(1, 1, audioContext.sampleRate);
-                // No need to fill with data, silence is default
-
-                silentSource.buffer = buffer;
-                silentSource.loop = true;
-                silentSource.connect(audioContext.destination);
-                silentSource.start(0);
-                // console.log("Silent audio source started/restarted."); // Removed verbose log
-             } catch (startError) {
-                 console.error("Could not start silent audio source:", startError); // Keep error log
-                 silentSource = null; // Ensure it's null if start failed
-                 // If starting failed even while running, something is wrong.
-             }
-        }
-        // else { console.log("Silent audio source appears to be running."); } // Removed verbose log
-
-    } else {
-         console.warn("AudioContext in unexpected state:", audioContext.state); // Keep warning
+    } else if (audioContext && audioContext.state === 'running') {
+         // console.log("AudioContext is running."); // Removed verbose log
     }
 }
 
