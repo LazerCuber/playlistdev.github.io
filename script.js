@@ -56,6 +56,8 @@ let currentPage = 1;
 // Web Audio Keep-Alive - REINSTATED
 let audioContext = null;
 let silentSourceNode = null; // Keep track of the silent node
+let wakeLock = null;
+let isWakeLockSupported = 'wakeLock' in navigator;
 
 // --- Icons ---
 // (Keep ICONS object as is)
@@ -296,6 +298,8 @@ function setupEventListeners() {
     document.body.addEventListener('touchstart', resumeAudio, { once: true, capture: true });
     document.body.addEventListener('keydown', resumeAudio, { once: true, capture: true });
 
+    // Add this line in setupEventListeners()
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 }
 
 // --- Playlist List Event Handler (Delegation) ---
@@ -626,8 +630,8 @@ function onPlayerStateChange(event) {
         case YT.PlayerState.PLAYING:
             currentlyPlayingVideoId = intendedVideoId;
             updatePlayingVideoHighlight(currentlyPlayingVideoId);
-            // *** Ensure context remains active while playing ***
             ensureAudioContext();
+            requestWakeLock();
             break;
         case YT.PlayerState.PAUSED:
             // *** Keep context active even when paused (for background resume) ***
@@ -1397,6 +1401,12 @@ function handleClosePlayer() {
         updateMediaSessionMetadata(null); // Clear metadata
         navigator.mediaSession.playbackState = 'none';
     }
+    if (wakeLock) {
+        wakeLock.release().then(() => {
+            console.log('Wake lock released on player close');
+            wakeLock = null;
+        });
+    }
     // Decide whether to stop the silent sound here. Keeping it running is
     // usually better for preventing future playback issues after closing/reopening player.
     // if (silentSourceNode) {
@@ -1488,6 +1498,42 @@ function setupMediaSessionActionHandlers() {
             console.warn(`Could not set MediaSession action handler for ${action}:`, error);
         }
     });
+}
+
+// Add this function after setupMediaSessionActionHandlers()
+function handleVisibilityChange() {
+  if (document.hidden && (currentlyPlayingVideoId || intendedVideoId)) {
+    // Page hidden but video was playing - mark for resume when visible
+    document.addEventListener('visibilitychange', attemptResumePlayback, {once: true});
+  }
+}
+
+function attemptResumePlayback() {
+  if (!document.hidden && (currentlyPlayingVideoId || intendedVideoId)) {
+    ensureAudioContext();
+    setTimeout(() => {
+      if (ytPlayer && isPlayerReady && ytPlayer.getPlayerState() === YT.PlayerState.PAUSED) {
+        ytPlayer.playVideo();
+      }
+    }, 300);
+  }
+}
+
+// Add this function after the attemptResumePlayback function
+async function requestWakeLock() {
+  if (!isWakeLockSupported) return;
+  
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    console.log('Wake lock activated');
+    
+    wakeLock.addEventListener('release', () => {
+      console.log('Wake lock released');
+      wakeLock = null;
+    });
+  } catch (err) {
+    console.log(`Wake lock request failed: ${err.name}, ${err.message}`);
+  }
 }
 
 // --- Start the app ---
