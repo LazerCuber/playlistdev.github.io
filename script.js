@@ -1389,7 +1389,7 @@ function handleTouchEnd(event) {
 // --- Start the app ---
 init();
 
-// Function to initialize and play silent audio (Enhanced Resume Logic)
+// Function to initialize and play silent audio (More Aggressive Source Restart)
 function startSilentAudio() {
     if (!(window.AudioContext || window.webkitAudioContext)) {
         console.warn("Web Audio API not supported. Silent audio hack disabled.");
@@ -1400,33 +1400,42 @@ function startSilentAudio() {
         if (audioContext && audioContext.state === 'suspended') {
             audioContext.resume().then(() => {
                 console.log("AudioContext resumed via user interaction.");
-                startSilentAudio(); // Re-run checks and potentially restart source
+                startSilentAudio(); // Re-run checks and restart source
             }).catch(e => console.error("Error resuming AudioContext via user interaction:", e));
         }
-        // Clean up listeners after use
+        // Clean up listeners after potential use
         document.removeEventListener('click', resumeAudio, { capture: true });
         document.removeEventListener('touchstart', resumeAudio, { capture: true });
         document.removeEventListener('keydown', resumeAudio, { capture: true });
     };
 
     const addInteractionListeners = () => {
-         // Clean up potential old listeners before adding new ones
          document.removeEventListener('click', resumeAudio, { capture: true });
          document.removeEventListener('touchstart', resumeAudio, { capture: true });
          document.removeEventListener('keydown', resumeAudio, { capture: true });
-         // Add new listeners
          console.log("Adding interaction listeners to resume AudioContext.");
          document.addEventListener('click', resumeAudio, { once: true, capture: true });
          document.addEventListener('touchstart', resumeAudio, { once: true, capture: true });
          document.addEventListener('keydown', resumeAudio, { once: true, capture: true });
     };
 
+    // 1. Ensure AudioContext Exists and is Not Closed
     if (!audioContext || audioContext.state === 'closed') {
         try {
             console.log("Creating new AudioContext.");
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             silentSource = null; // Ensure silentSource is reset
             console.log("New AudioContext state:", audioContext.state);
+            // Add a state change listener for debugging context suspensions
+            audioContext.onstatechange = () => {
+                 console.log("AudioContext state changed to:", audioContext.state);
+                 // If it becomes suspended unexpectedly, try to resume or add listeners
+                 if (audioContext.state === 'suspended') {
+                     startSilentAudio(); // Re-run the logic to handle suspension
+                 } else if (audioContext.state === 'running') {
+                     startSilentAudio(); // Ensure source is playing if context resumes
+                 }
+            };
         } catch (e) {
             console.error("Web Audio API is not supported or failed to initialize:", e);
             audioContext = null;
@@ -1435,58 +1444,59 @@ function startSilentAudio() {
         }
     }
 
+    // 2. Handle Suspended State
     if (audioContext.state === 'suspended') {
         console.log("AudioContext is suspended. Attempting programmatic resume...");
         audioContext.resume().then(() => {
             console.log("AudioContext resumed programmatically. State:", audioContext.state);
-            // If resume succeeded, try starting/restarting the source now
+            // Crucially, call startSilentAudio *again* after successful resume
+            // to ensure the silent source is created/restarted in the now running context.
             startSilentAudio();
         }).catch(e => {
-            console.warn("Programmatic resume failed (requires user interaction). Adding listeners.", e);
+            console.warn("Programmatic resume failed (likely requires user interaction). Adding listeners.", e);
             addInteractionListeners();
         });
-        // Don't proceed further if suspended and resume attempt is pending/failed
+        // Stop further execution in this call if suspended, wait for resume.
         return;
     }
 
-    // --- If context is running, manage the silent source ---
+    // 3. Ensure Silent Source is Playing if Context is Running
     if (audioContext.state === 'running') {
-         // Stop and disconnect existing source if it exists
-         if (silentSource) {
-             try {
-                 silentSource.stop();
-                 silentSource.disconnect();
-                 console.log("Stopped existing silent source.");
-             } catch (e) { /* Might already be stopped or disconnected */ }
-             silentSource = null; // Reset source reference
-         }
+        // Stop and disconnect any *existing* source node.
+        // This handles cases where the previous node might be in a bad state.
+        if (silentSource) {
+            try {
+                silentSource.stop();
+                silentSource.disconnect();
+                // console.log("Stopped and disconnected existing silent source.");
+            } catch (e) { /* Ignore errors (might be already stopped/disconnected) */ }
+            silentSource = null;
+        }
 
+        // Create and start a *new* silent source node.
         try {
-            console.log("Creating/Recreating silent audio buffer source.");
+            // console.log("Creating and starting new silent audio buffer source.");
             silentSource = audioContext.createBufferSource();
-            // Create a 1-second buffer of silence
             const sampleRate = audioContext.sampleRate;
-            const buffer = audioContext.createBuffer(1, sampleRate, sampleRate); // 1 channel, 1 second duration
-            // Explicitly fill with zeros (though createBuffer often does this)
-            const data = buffer.getChannelData(0);
-            for (let i = 0; i < data.length; i++) { data[i] = 0; }
-
+            // Using a minimal buffer is often sufficient
+            const buffer = audioContext.createBuffer(1, 1, sampleRate);
             silentSource.buffer = buffer;
             silentSource.loop = true;
             silentSource.connect(audioContext.destination);
             silentSource.start(0);
-            console.log("Silent audio source started/restarted.");
+            // console.log("New silent audio source started.");
 
-            // If we successfully started, remove any lingering interaction listeners
+            // If source started successfully, remove interaction listeners
             document.removeEventListener('click', resumeAudio, { capture: true });
             document.removeEventListener('touchstart', resumeAudio, { capture: true });
             document.removeEventListener('keydown', resumeAudio, { capture: true });
 
         } catch (startError) {
             console.error("Could not start silent audio source:", startError);
-            silentSource = null;
-            // If starting failed while running (unlikely but possible), maybe add listeners?
-            // It's more likely an issue with the audio context itself.
+            silentSource = null; // Ensure source is null if start failed
+            // If starting failed even while context is 'running', something is wrong.
+            // Maybe try adding interaction listeners as a fallback?
+            addInteractionListeners();
         }
     }
 }
