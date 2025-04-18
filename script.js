@@ -153,6 +153,13 @@ function ensureAudioContext() {
             if (audioContext.state === 'running') {
                 playSilentSound();
             }
+            // Add listeners for state changes (optional but good practice)
+            audioContext.onstatechange = () => {
+                console.log("AudioContext state changed to:", audioContext.state);
+                if (audioContext.state === 'running') {
+                    playSilentSound(); // Ensure silence plays if context resumes unexpectedly
+                }
+            };
         } catch (e) {
             console.error("Web Audio API not supported or context creation failed.", e);
             audioContext = null; // Ensure it's null on failure
@@ -166,7 +173,7 @@ function ensureAudioContext() {
         console.log("AudioContext suspended. Attempting to resume...");
         audioContext.resume().then(() => {
             console.log("AudioContext resumed successfully. State:", audioContext.state);
-            playSilentSound(); // Play silent sound after successful resume
+            // playSilentSound(); // State change handler should now trigger this
         }).catch(e => {
             // This warning is common if resume is called without a direct user action
             console.warn("Failed to resume AudioContext automatically (may need user interaction):", e);
@@ -185,12 +192,20 @@ function ensureAudioContext() {
  */
 function playSilentSound() {
     if (!audioContext || audioContext.state !== 'running') {
-         // console.log("Cannot play silent sound: AudioContext not running.");
-         return; // Don't proceed if context isn't running
+        // console.log("Cannot play silent sound: AudioContext not running.");
+        return; // Don't proceed if context isn't running
     }
 
-    // Stop and clear existing node if it exists
+    // Stop and clear existing node if it exists AND if it's not already playing the same buffer
     if (silentSourceNode) {
+        // Basic check to see if it might be the same node already running
+        // A more robust check isn't strictly necessary here as re-creating is usually fine
+        if (silentSourceNode.buffer && silentSourceNode.loop) {
+           // Already playing, likely don't need to restart
+           // console.log("Silent node appears to be running already.");
+           return;
+        }
+        // If different or stopped, clear it
         try {
             silentSourceNode.stop();
         } catch (e) { /* Might already be stopped or not started */ }
@@ -211,6 +226,19 @@ function playSilentSound() {
     // Connect to the output (speakers)
     silentSourceNode.connect(audioContext.destination);
 
+    // Handle node ending unexpectedly (though loop=true should prevent this)
+    silentSourceNode.onended = () => {
+        // console.log("Silent node ended unexpectedly. Clearing reference.");
+        if (silentSourceNode) {
+            silentSourceNode.disconnect(); // Ensure disconnect on end
+            silentSourceNode = null;
+            // Optionally, try to restart it immediately if context is still running
+            // if (audioContext && audioContext.state === 'running') {
+            //     playSilentSound();
+            // }
+        }
+    };
+
     // Start playing
     try {
         silentSourceNode.start(0);
@@ -219,11 +247,12 @@ function playSilentSound() {
         console.error("Error starting silent audio node:", e);
         // Clear the node reference if starting failed
         if (silentSourceNode) {
-            silentSourceNode.disconnect();
+            try { silentSourceNode.disconnect(); } catch (err) {}
             silentSourceNode = null;
         }
     }
 }
+
 
 // --- Event Listeners Setup ---
 function setupEventListeners() {
@@ -255,6 +284,18 @@ function setupEventListeners() {
     // --- Pagination ---
     prevPageBtn.addEventListener('click', () => changePage(-1));
     nextPageBtn.addEventListener('click', () => changePage(1));
+
+    // --- Attempt to resume AudioContext on any user interaction ---
+    // Add a general listener to resume context on first interaction if suspended
+    // Use { once: true } so it only runs once after the page loads
+    const resumeAudio = () => {
+        console.log("User interaction detected, ensuring audio context...");
+        ensureAudioContext();
+    };
+    document.body.addEventListener('click', resumeAudio, { once: true, capture: true });
+    document.body.addEventListener('touchstart', resumeAudio, { once: true, capture: true });
+    document.body.addEventListener('keydown', resumeAudio, { once: true, capture: true });
+
 }
 
 // --- Playlist List Event Handler (Delegation) ---
@@ -262,6 +303,9 @@ function handlePlaylistListActions(event) {
     const playlistItem = event.target.closest('.playlist-item');
     if (!playlistItem) return;
     const playlistId = parseInt(playlistItem.dataset.id);
+
+    // *** Ensure context active on user interaction ***
+    ensureAudioContext();
 
     if (event.target.closest('.rename-btn')) {
         event.stopPropagation(); handleRenamePlaylist(playlistId);
@@ -278,11 +322,12 @@ function handleVideoGridClick(event) {
     if (!videoCard) return;
     const videoId = videoCard.dataset.videoId;
 
+    // *** Ensure AudioContext is active on user click BEFORE playing ***
+    ensureAudioContext(); // This is a key interaction point
+
     if (event.target.closest('.delete-video-btn')) {
         event.stopPropagation(); handleDeleteVideo(videoId);
     } else if (!event.target.closest('.drag-handle')) { // Don't play if clicking the handle
-        // *** Ensure AudioContext is active on user click BEFORE playing ***
-        ensureAudioContext();
         playVideo(videoId);
     }
 }
@@ -380,13 +425,19 @@ function handleDragOver(event) {
 }
 
 function handleDragLeave(event) {
+    const relatedTarget = event.relatedTarget;
     const targetCard = event.target.closest('.video-card');
-    // Only clear if leaving the specific target we were over
-    if (targetCard && targetCard === dragTargetElement && !targetCard.contains(event.relatedTarget)) {
+
+    // Check if leaving the grid container entirely or entering a non-card element within the grid
+    const leavingGridContainer = !videoGridEl.contains(relatedTarget);
+    const enteringNonCard = relatedTarget && !relatedTarget.closest('.video-card');
+
+    if (targetCard && targetCard === dragTargetElement && (leavingGridContainer || enteringNonCard || !targetCard.contains(relatedTarget))) {
         clearDragOverStyles();
         dragTargetElement = null;
     }
 }
+
 
 function handleDrop(event) {
     event.preventDefault();
@@ -396,6 +447,9 @@ function handleDrop(event) {
 
     if (draggedVideoId && dropTargetId !== draggedVideoId) { // Ensure dropTargetId is not the dragged item itself
         handleReorderVideo(draggedVideoId, dropTargetId);
+    } else if (draggedVideoId && !dropTargetId) {
+        // Handle drop in empty space (append to end)
+        handleReorderVideo(draggedVideoId, null); // Pass null target to indicate append
     }
     // Reset state regardless of successful drop
     draggedVideoId = null;
@@ -419,12 +473,16 @@ function handleTouchStart(event) {
     const dragHandle = event.target.closest('.drag-handle');
 
     if (targetCard && dragHandle) {
+         // *** Ensure context active on user interaction ***
+        ensureAudioContext();
+
         isTouchDragging = true;
         draggedVideoId = targetCard.dataset.videoId; // Use the same state var
         touchDraggedElement = targetCard; // Specific element being touched
         touchDragStartY = event.touches[0].clientY;
         touchDraggedElement.classList.add('dragging');
         // Optional: navigator.vibrate(50);
+        event.preventDefault(); // Prevent default scroll/zoom only if dragging starts on handle
     } else {
         isTouchDragging = false; // Reset if touch didn't start on handle
     }
@@ -432,13 +490,13 @@ function handleTouchStart(event) {
 
 function handleTouchMove(event) {
     if (!isTouchDragging || !touchDraggedElement) return;
-    event.preventDefault(); // Prevent scrolling
+    event.preventDefault(); // Prevent scrolling *during* drag
 
     const touch = event.touches[0];
     // Find element under touch
-    touchDraggedElement.style.visibility = 'hidden';
+    touchDraggedElement.style.visibility = 'hidden'; // Temporarily hide dragged item
     const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
-    touchDraggedElement.style.visibility = '';
+    touchDraggedElement.style.visibility = ''; // Make it visible again
 
     const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card') : null;
 
@@ -448,8 +506,9 @@ function handleTouchMove(event) {
         targetCard.classList.add('drag-over');
         dragTargetElement = targetCard; // Use the same state var
     } else {
-        dragTargetElement = null;
+        dragTargetElement = null; // Reset if over self or empty space
     }
+
     // Optional: Visual feedback like moving the element with touch
     // const deltaY = touch.clientY - touchDragStartY;
     // touchDraggedElement.style.transform = `translateY(${deltaY}px)`;
@@ -464,9 +523,16 @@ function handleTouchEnd(event) {
 
     const dropTargetId = dragTargetElement ? dragTargetElement.dataset.videoId : null;
 
-    if (draggedVideoId && dropTargetId && dropTargetId !== draggedVideoId) {
+    if (draggedVideoId && dropTargetId !== draggedVideoId) { // Dropped onto another card
         handleReorderVideo(draggedVideoId, dropTargetId);
-        // Optional: navigator.vibrate(50);
+    } else if (draggedVideoId && !dropTargetId) { // Dropped onto empty space
+        // Check if the touch ended within the videoGridEl bounds
+        const touch = event.changedTouches[0];
+        const gridRect = videoGridEl.getBoundingClientRect();
+        if (touch.clientX >= gridRect.left && touch.clientX <= gridRect.right &&
+            touch.clientY >= gridRect.top && touch.clientY <= gridRect.bottom) {
+             handleReorderVideo(draggedVideoId, null); // Append to end
+        }
     }
 
     // Reset all touch-related state
@@ -476,7 +542,6 @@ function handleTouchEnd(event) {
     dragTargetElement = null; // Reset shared state
     touchDragStartY = 0;
 }
-
 
 // --- Theme Management ---
 // (Keep loadTheme, applyTheme, toggleTheme, updateThemeIcon as they are straightforward)
@@ -490,6 +555,8 @@ function applyTheme(themeName) {
     Storage.setRaw('uiTheme', themeName);
 }
 function toggleTheme() {
+    // *** Ensure context active on user interaction ***
+    ensureAudioContext();
     applyTheme(currentTheme === 'light' ? 'dark' : 'light');
 }
 function updateThemeIcon() {
@@ -520,11 +587,13 @@ function onPlayerReady(event) {
     console.log("Player Ready.");
     isPlayerReady = true;
     // *** Try to ensure context is running when player is ready ***
+    // This might still be suspended if no user interaction happened yet
     ensureAudioContext();
     setupMediaSessionActionHandlers(); // Setup MediaSession handlers
     if (videoIdToPlayOnReady) {
         const videoToPlay = videoIdToPlayOnReady;
         videoIdToPlayOnReady = null;
+        // playVideo will call ensureAudioContext again before loading
         playVideo(videoToPlay); // Play the queued video
     }
 }
@@ -571,7 +640,7 @@ function onPlayerStateChange(event) {
             updatePlayingVideoHighlight(null);
             if (isAutoplayEnabled) {
                 // *** Ensure context is active before next play attempt ***
-                ensureAudioContext();
+                // playNextVideo will call ensureAudioContext again before loading
                 playNextVideo(endedVideoId);
             } else {
                  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "none";
@@ -604,6 +673,7 @@ function onPlayerError(event) {
     // Autoplay skip logic
     if (isAutoplayEnabled && erroredVideoId) {
         showToast(`Skipping to next video.`, 'info', 4000);
+        // playNextVideo will call ensureAudioContext
         setTimeout(() => playNextVideo(erroredVideoId), 500); // Delay slightly
     } else if (!isAutoplayEnabled) {
         // If not autoplaying, hide the player on error
@@ -613,6 +683,9 @@ function onPlayerError(event) {
 
 // --- Playlist Management ---
 function handleCreatePlaylist() {
+     // *** Ensure context active on user interaction ***
+    ensureAudioContext();
+
     const name = playlistNameInput.value.trim();
     if (!name) { showToast('Please enter a playlist name.', 'error'); playlistNameInput.focus(); return; }
     const newPlaylist = { id: Date.now(), name: name, videos: [] };
@@ -626,6 +699,9 @@ function handleCreatePlaylist() {
 }
 
 function handleDeletePlaylist(id) {
+     // *** Ensure context active on user interaction ***
+    ensureAudioContext();
+
     const playlistIndex = playlists.findIndex(p => p.id === id);
     if (playlistIndex === -1) return;
     const playlistName = playlists[playlistIndex].name;
@@ -651,6 +727,9 @@ function handleDeletePlaylist(id) {
 }
 
 function handleRenamePlaylist(id) {
+     // *** Ensure context active on user interaction ***
+    ensureAudioContext();
+
     const playlist = playlists.find(p => p.id === id); // Don't need getCurrentPlaylist here
     if (!playlist) return;
     const oldName = playlist.name;
@@ -668,6 +747,8 @@ function handleRenamePlaylist(id) {
 }
 
 function selectPlaylist(id) {
+    // Called via handlePlaylistListActions, which already ensures context
+
     const selectedPlaylist = playlists.find(p => p.id === id);
     if (!selectedPlaylist) {
         console.error("Attempted to select non-existent playlist ID:", id);
@@ -694,6 +775,9 @@ function selectPlaylist(id) {
 }
 
 function handleClearPlaylist() {
+     // *** Ensure context active on user interaction ***
+    ensureAudioContext();
+
     const currentPlaylist = getCurrentPlaylist();
     if (!currentPlaylist || currentPlaylist.videos.length === 0) {
         showToast('Playlist is already empty.', 'info');
@@ -715,6 +799,9 @@ function handlePlaylistSearch() {
 }
 
 function handleShufflePlaylist() {
+     // *** Ensure context active on user interaction ***
+    ensureAudioContext();
+
     const currentPlaylist = getCurrentPlaylist();
     if (!currentPlaylist) { showToast('Select a playlist to shuffle.', 'info'); return; }
     if (currentPlaylist.videos.length < 2) { showToast('Need at least two videos to shuffle.', 'info'); return; }
@@ -741,6 +828,9 @@ function updatePlayingVideoHighlight(videoId) {
 }
 
 async function handleAddVideo() {
+     // *** Ensure context active on user interaction ***
+    ensureAudioContext();
+
     const url = videoUrlInput.value.trim();
     const currentPlaylist = getCurrentPlaylist(); // Use helper
     if (!url) { showToast('Please enter a YouTube video URL.', 'error'); return; }
@@ -756,10 +846,23 @@ async function handleAddVideo() {
     videoUrlInput.disabled = true;
 
     try {
-        const response = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`);
+        // Use a CORS proxy for noembed if direct fetching might be blocked (optional but safer)
+        // Example proxy (replace with your own or a reliable public one if needed):
+        // const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
+        // const fetchUrl = `${proxyUrl}https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`;
+        const fetchUrl = `https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`;
+
+        const response = await fetch(fetchUrl);
         if (!response.ok) {
             let errorMsg = `Failed to fetch video info (HTTP ${response.status}).`;
-            try { const errData = await response.json(); if (errData.error) errorMsg = errData.error; } catch (_) { }
+            try {
+                const errData = await response.json();
+                if (errData.error) errorMsg = errData.error;
+             } catch (_) { /* Ignore if response is not JSON */ }
+            // Provide more specific advice for common CORS issues
+            if (response.status === 0 || response.type === 'opaque' || response.status === 403) {
+                 errorMsg += ' This might be a CORS issue. Try using a CORS proxy if not already doing so.';
+            }
             throw new Error(errorMsg);
         }
         const data = await response.json();
@@ -782,7 +885,7 @@ async function handleAddVideo() {
 
     } catch (error) {
         console.error('Add video error:', error);
-        showToast(`Error adding video: ${error.message || 'Unknown error'}`, 'error', 5000);
+        showToast(`Error adding video: ${error.message || 'Unknown error'}`, 'error', 6000);
     } finally {
         // Restore button state
         addVideoBtn.innerHTML = ICONS.add + ' Add Video';
@@ -793,6 +896,8 @@ async function handleAddVideo() {
 }
 
 function handleDeleteVideo(videoId) {
+    // Called via handleVideoGridClick, which already ensures context
+
     const currentPlaylist = getCurrentPlaylist();
     if (!currentPlaylist) return;
     const videoIndex = currentPlaylist.videos.findIndex(v => v.id === videoId);
@@ -823,6 +928,8 @@ function handleDeleteVideo(videoId) {
 }
 
 function handleReorderVideo(videoIdToMove, targetVideoId) {
+    // Called via drop handlers (mouse/touch), which stem from user interaction
+
     const currentPlaylist = getCurrentPlaylist();
     if (!currentPlaylist) return;
 
@@ -831,26 +938,26 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
 
     const [videoToMoveData] = currentPlaylist.videos.splice(videoToMoveIndex, 1); // Remove
 
-    const targetIndex = currentPlaylist.videos.findIndex(v => v.id === targetVideoId);
-
-    if (targetIndex !== -1) {
-        currentPlaylist.videos.splice(targetIndex, 0, videoToMoveData); // Insert before target
-    } else {
-        // If target not found (e.g., dropped in empty space or error), append to end
+    if (targetVideoId === null) {
+        // Append to the end if targetVideoId is null (dropped in empty space)
         currentPlaylist.videos.push(videoToMoveData);
+    } else {
+        const targetIndex = currentPlaylist.videos.findIndex(v => v.id === targetVideoId);
+        if (targetIndex !== -1) {
+            currentPlaylist.videos.splice(targetIndex, 0, videoToMoveData); // Insert before target
+        } else {
+            // Fallback: If target somehow not found, append to end
+            console.warn("Drag/drop target video not found, appending to end.");
+            currentPlaylist.videos.push(videoToMoveData);
+        }
     }
 
     savePlaylistsState();
-    // Re-render only if the order change affects the current page
-    const startIndex = (currentPage - 1) * VIDEOS_PER_PAGE;
-    const endIndex = startIndex + VIDEOS_PER_PAGE;
-    if (videoToMoveIndex >= startIndex && videoToMoveIndex < endIndex ||
-        (targetIndex !== -1 && targetIndex >= startIndex && targetIndex < endIndex) ||
-         targetIndex === -1) { // Also re-render if moved to end (targetIndex -1)
-         renderVideos();
-    }
+    // Always re-render the current page after a reorder to reflect changes
+    renderVideos();
     // No toast needed for reorder
 }
+
 
 function playVideo(videoId) {
     if (!videoId) { console.error("playVideo: Invalid videoId."); return; }
@@ -861,7 +968,7 @@ function playVideo(videoId) {
 
     intendedVideoId = videoId;
     playerWrapperEl.classList.remove('hidden');
-    updatePlayingVideoHighlight(videoId);
+    updatePlayingVideoHighlight(videoId); // Highlight optimistically
 
     // Update Media Session metadata
     if ('mediaSession' in navigator) {
@@ -873,30 +980,47 @@ function playVideo(videoId) {
     ensureAudioContext();
 
     if (ytPlayer && isPlayerReady) {
-        try {
-            // Add a small delay IF the audio context might have just been resumed.
-            // This gives the browser a moment to acknowledge the 'running' state.
-            // Adjust delay as needed (0 might be enough, or up to 50-100ms).
-            const delay = (audioContext && audioContext.state === 'running') ? 0 : 50; // Optional delay
+        // Only attempt playback if audio context is running or we expect it to resume
+        if (audioContext && (audioContext.state === 'running' || audioContext.state === 'suspended')) {
+            try {
+                // Add a small delay IF the audio context MIGHT have just been resumed
+                // or if we're immediately trying after ensuring it.
+                const delay = (audioContext.state === 'suspended') ? 100 : 50; // Increased delay slightly
 
-            setTimeout(() => {
-                console.log(`Attempting to load video: ${videoId}`);
-                ytPlayer.loadVideoById(videoId);
-                // ytPlayer.playVideo(); // Usually not needed, loadVideoById often autoplays
-            }, delay);
+                console.log(`playVideo: Scheduling loadVideoById for ${videoId} in ${delay}ms (AudioContext state: ${audioContext.state})`);
+                setTimeout(() => {
+                    if (intendedVideoId === videoId) { // Check if still the intended video
+                         console.log(`playVideo: Executing loadVideoById for ${videoId}`);
+                         ytPlayer.loadVideoById(videoId);
+                    } else {
+                         console.log(`playVideo: Playback for ${videoId} cancelled, different video intended.`);
+                    }
+                    // ytPlayer.playVideo(); // Usually not needed, loadVideoById often autoplays
+                }, delay);
 
-        } catch (error) {
-            console.error("playVideo: Error calling loadVideoById:", error);
-            showToast("Failed to load video.", "error");
-            handlePlayerErrorCleanup(videoId); // Use a common cleanup function
+            } catch (error) {
+                console.error("playVideo: Error calling loadVideoById:", error);
+                showToast("Failed to load video.", "error");
+                handlePlayerErrorCleanup(videoId); // Use a common cleanup function
+            }
+        } else {
+             console.warn(`playVideo: Cannot play video ${videoId}. AudioContext not available or in closed state.`);
+             showToast("Audio system not ready. Please interact with the page (click/tap).", "error");
+             handlePlayerErrorCleanup(videoId);
+             handleClosePlayer(); // Hide player if audio isn't ready
         }
     } else {
         console.log(`Player not ready, queuing video: ${videoId}`);
         videoIdToPlayOnReady = videoId;
+        // Still ensure highlight is set for queued video
+        updatePlayingVideoHighlight(videoId);
     }
 }
 
+
 function playNextVideo(previousVideoId) {
+    // ensureAudioContext() will be called within playVideo
+
     const currentPlaylist = getCurrentPlaylist();
     if (!currentPlaylist || currentPlaylist.videos.length < 1) {
         handleClosePlayer();
@@ -910,8 +1034,6 @@ function playNextVideo(previousVideoId) {
 
     // If previous video not found, or no previous ID, play the first video
     if (currentIndex === -1 && currentPlaylist.videos.length > 0) {
-        // *** Ensure context active before playing next ***
-        ensureAudioContext();
         playVideo(currentPlaylist.videos[0].id);
         return;
     }
@@ -921,8 +1043,6 @@ function playNextVideo(previousVideoId) {
     const nextVideo = currentPlaylist.videos[nextIndex];
 
     if (nextVideo) {
-         // *** Ensure context active before playing next ***
-        ensureAudioContext();
         playVideo(nextVideo.id);
     } else {
         // Should not happen with modulo logic if list isn't empty
@@ -932,6 +1052,8 @@ function playNextVideo(previousVideoId) {
 }
 
 function playPreviousVideo(currentVideoId) {
+    // ensureAudioContext() will be called within playVideo
+
     const currentPlaylist = getCurrentPlaylist();
     if (!currentPlaylist || currentPlaylist.videos.length < 1) {
         handleClosePlayer();
@@ -942,8 +1064,6 @@ function playPreviousVideo(currentVideoId) {
 
     // If current video not found, play the last video
     if (currentIndex === -1 && currentPlaylist.videos.length > 0) {
-         // *** Ensure context active before playing previous ***
-        ensureAudioContext();
         playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
         return;
     }
@@ -953,8 +1073,6 @@ function playPreviousVideo(currentVideoId) {
     const previousVideo = currentPlaylist.videos[previousIndex];
 
     if (previousVideo) {
-         // *** Ensure context active before playing previous ***
-        ensureAudioContext();
         playVideo(previousVideo.id);
     } else {
         console.error("playPreviousVideo: Could not determine previous video. Stopping.");
@@ -1006,14 +1124,21 @@ function renderPlaylists() {
     const searchTerm = playlistSearchInput.value.toLowerCase();
     const filteredPlaylists = playlists.filter(p => p.name.toLowerCase().includes(searchTerm));
 
-    if (filteredPlaylists.length === 0) {
+    if (filteredPlaylists.length === 0 && playlists.length > 0 && searchTerm) {
         playlistListEl.innerHTML = ''; // Clear list
-        noPlaylistsMessageEl.textContent = searchTerm ? 'No playlists match search.' : 'No playlists created yet.';
+        noPlaylistsMessageEl.textContent = 'No playlists match search.';
         noPlaylistsMessageEl.classList.remove('hidden');
-    } else {
+    } else if (playlists.length === 0) {
+         playlistListEl.innerHTML = ''; // Clear list
+        noPlaylistsMessageEl.textContent = 'No playlists created yet.';
+        noPlaylistsMessageEl.classList.remove('hidden');
+    }
+    else {
         noPlaylistsMessageEl.classList.add('hidden');
         const fragment = document.createDocumentFragment();
-        filteredPlaylists.forEach(playlist => {
+        const listToRender = searchTerm ? filteredPlaylists : playlists; // Render all if no search
+
+        listToRender.forEach(playlist => {
             const li = document.createElement('li');
             li.className = `playlist-item ${playlist.id === currentPlaylistId ? 'active' : ''}`;
             li.dataset.id = playlist.id;
@@ -1059,8 +1184,9 @@ function renderVideos() {
     const fragment = document.createDocumentFragment();
     videosToRender.forEach(video => {
         const div = document.createElement('div');
-        // Set properties directly on the created element
-        div.className = `video-card ${video.id === currentlyPlayingVideoId ? 'playing' : ''}`; // Add playing class here directly
+        // Add playing class based on INTENDED or CURRENTLY playing video ID
+        const isPlaying = video.id === currentlyPlayingVideoId || video.id === intendedVideoId;
+        div.className = `video-card ${isPlaying ? 'playing' : ''}`;
         div.dataset.videoId = video.id;
         div.draggable = true;
         div.innerHTML = `
@@ -1080,8 +1206,7 @@ function renderVideos() {
     videoGridEl.innerHTML = ''; // Clear before append
     videoGridEl.appendChild(fragment);
     renderPaginationControls(totalVideos, totalPages);
-    // Ensure highlight is correct after render (in case currently playing video was on another page)
-    updatePlayingVideoHighlight(currentlyPlayingVideoId);
+    // Highlight update is handled by adding class during element creation now
 }
 
 
@@ -1115,6 +1240,9 @@ function updateUIForNoSelection() {
 }
 
 function handleAutoplayToggle() {
+    // *** Ensure context active on user interaction ***
+    ensureAudioContext();
+
     isAutoplayEnabled = autoplayToggle.checked;
     saveAutoplaySetting();
     showToast(`Autoplay ${isAutoplayEnabled ? 'enabled' : 'disabled'}.`, 'info');
@@ -1123,6 +1251,8 @@ function handleAutoplayToggle() {
 function handleVisualSwitchClick(event) {
     // If the click is on the visual part (not the hidden input), toggle the input's state.
     if (event.target !== autoplayToggle) {
+         // *** Ensure context active on user interaction ***
+        ensureAudioContext();
         autoplayToggle.click(); // Programmatically click the checkbox to trigger its change event
     }
 }
@@ -1130,6 +1260,9 @@ function handleVisualSwitchClick(event) {
 // --- Import / Export ---
 // (Keep handleExportPlaylists and handleImportPlaylists largely as is, they use standard APIs)
 function handleExportPlaylists() {
+    // *** Ensure context active on user interaction ***
+    ensureAudioContext();
+
     if (playlists.length === 0) { showToast('No playlists to export.', 'info'); return; }
     try {
         const dataStr = JSON.stringify(playlists, null, 2);
@@ -1149,6 +1282,9 @@ function handleExportPlaylists() {
 }
 
 function handleImportPlaylists(event) {
+    // *** Ensure context active on user interaction ***
+    ensureAudioContext();
+
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -1162,12 +1298,14 @@ function handleImportPlaylists(event) {
 
             importedData.forEach(p => {
                 // Basic validation
-                if (!p || typeof p.id === 'undefined' || typeof p.name !== 'string') {
-                    skippedCount++; return;
+                if (!p || typeof p.id !== 'number' || typeof p.name !== 'string') { // ID should be number
+                    console.warn('Skipping invalid playlist during import:', p);
+                    skippedCount++;
+                    return;
                 }
                 // Ensure videos array exists and filter invalid videos
                 p.videos = Array.isArray(p.videos)
-                    ? p.videos.filter(v => v && typeof v.id === 'string' && typeof v.title === 'string')
+                    ? p.videos.filter(v => v && typeof v.id === 'string' && v.id.length === 11 && typeof v.title === 'string' && typeof v.thumbnail === 'string' && typeof v.url === 'string')
                     : [];
 
                 if (!existingIds.has(p.id)) {
@@ -1175,7 +1313,9 @@ function handleImportPlaylists(event) {
                     existingIds.add(p.id);
                     addedCount++;
                 } else {
-                    skippedCount++; // Simple merge: skip duplicates
+                    // Simple merge: skip duplicates by ID
+                    console.log(`Skipping playlist '${p.name}' (ID: ${p.id}) during import, ID already exists.`);
+                    skippedCount++;
                 }
             });
 
@@ -1186,7 +1326,11 @@ function handleImportPlaylists(event) {
             // Select first playlist if none was selected
             if (!currentPlaylistId && playlists.length > 0) {
                 selectPlaylist(playlists[0].id);
+            } else if (currentPlaylistId) {
+                // Re-render videos if the current playlist might have been modified by import (though unlikely with skip logic)
+                renderVideos();
             }
+
         } catch (error) {
             console.error("Import error:", error);
             showToast(`Import failed: ${error.message}`, 'error');
@@ -1204,6 +1348,8 @@ function escapeHTML(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+    // Alternative (potentially faster for very frequent use, but less safe if misused):
+    // return str.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"').replace(/'/g, ''');
 }
 
 function showToast(message, type = 'info', duration = 3000) {
@@ -1212,6 +1358,9 @@ function showToast(message, type = 'info', duration = 3000) {
     const icon = ICONS[type] || ICONS.info;
     toast.innerHTML = `${icon}<span>${escapeHTML(message)}</span>`;
     toastContainerEl.appendChild(toast);
+
+    // Force reflow to ensure animation plays
+    toast.offsetHeight;
 
     // Animate in & schedule removal
     requestAnimationFrame(() => {
@@ -1248,14 +1397,14 @@ function handleClosePlayer() {
         updateMediaSessionMetadata(null); // Clear metadata
         navigator.mediaSession.playbackState = 'none';
     }
-    // Optionally stop the silent sound when player is explicitly closed
+    // Decide whether to stop the silent sound here. Keeping it running is
+    // usually better for preventing future playback issues after closing/reopening player.
     // if (silentSourceNode) {
     //     try { silentSourceNode.stop(); } catch(e) {}
     //     silentSourceNode.disconnect();
     //     silentSourceNode = null;
     //     console.log("Silent audio node stopped on player close.");
     // }
-    // Decide if you want to stop the keep-alive here or let it run
 }
 
 // --- Media Session API ---
@@ -1276,8 +1425,10 @@ function updateMediaSessionMetadata(video) {
         artist: 'YouTube', // Simplified
         album: playlistName,
         artwork: [
-            // Prioritize higher quality thumbnails if potentially available
-            { src: video.thumbnail.replace('mqdefault', 'hqdefault'), sizes: '480x360', type: 'image/jpeg' },
+            // Provide multiple sizes, browser picks best
+            { src: video.thumbnail.replace('mqdefault.jpg', 'maxresdefault.jpg'), sizes: '1280x720', type: 'image/jpeg' },
+            { src: video.thumbnail.replace('mqdefault.jpg', 'sddefault.jpg'), sizes: '640x480', type: 'image/jpeg' },
+            { src: video.thumbnail.replace('mqdefault.jpg', 'hqdefault.jpg'), sizes: '480x360', type: 'image/jpeg' },
             { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' }, // mqdefault
         ]
     });
@@ -1292,30 +1443,41 @@ function setupMediaSessionActionHandlers() {
             ensureAudioContext();
             if (ytPlayer && isPlayerReady && typeof ytPlayer.playVideo === 'function') {
                 // Add a small delay here too, in case resume was needed
-                setTimeout(() => ytPlayer.playVideo(), 50);
+                 console.log("Media Session: Attempting playVideo...");
+                setTimeout(() => ytPlayer.playVideo(), 100); // Increased delay for media session
             } else if (intendedVideoId || currentlyPlayingVideoId) {
-                // playVideo already calls ensureAudioContext
+                 console.log("Media Session: Calling playVideo function...");
+                // playVideo already calls ensureAudioContext and handles delay
                 playVideo(intendedVideoId || currentlyPlayingVideoId);
+            } else {
+                 console.log("Media Session: No video to play.");
             }
              navigator.mediaSession.playbackState = "playing";
         },
         pause: () => {
             if (ytPlayer && isPlayerReady && typeof ytPlayer.pauseVideo === 'function') {
+                console.log("Media Session: Calling pauseVideo...");
                 ytPlayer.pauseVideo();
             }
             // *** Keep context active even when paused via media session ***
             ensureAudioContext();
              navigator.mediaSession.playbackState = "paused";
         },
-        stop: () => handleClosePlayer(),
+        stop: () => {
+             console.log("Media Session: Calling handleClosePlayer...");
+             handleClosePlayer();
+        },
         previoustrack: () => {
-            // playPreviousVideo already calls ensureAudioContext
+            console.log("Media Session: Calling playPreviousVideo...");
+            // playPreviousVideo already calls ensureAudioContext/playVideo
             playPreviousVideo(currentlyPlayingVideoId || intendedVideoId);
         },
         nexttrack: () => {
-            // playNextVideo already calls ensureAudioContext
+            console.log("Media Session: Calling playNextVideo...");
+            // playNextVideo already calls ensureAudioContext/playVideo
             playNextVideo(currentlyPlayingVideoId || intendedVideoId);
         }
+        // Seek actions (seekbackward, seekforward, seekto) could be added if desired
     };
 
     // Set handlers using the actions object
@@ -1329,4 +1491,9 @@ function setupMediaSessionActionHandlers() {
 }
 
 // --- Start the app ---
-init();
+// Ensure the DOM is fully loaded before initializing
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init(); // DOMContentLoaded has already fired
+}
