@@ -1016,14 +1016,16 @@ function playVideo(videoId) {
     playerWrapperEl.classList.remove('hidden');
     updatePlayingVideoHighlight(videoId);
 
+    // Update Media Session metadata immediately
+    updateMediaSessionMetadata(videoData);
+
     // Ensure AudioContext is active
     ensureAudioContext();
 
     if (ytPlayer && isPlayerReady) {
-        // Add a small delay to ensure user interaction is registered
         setTimeout(() => {
             ytPlayer.loadVideoById(videoId);
-        }, 100);
+        }, 10);
     } else {
         videoIdToPlayOnReady = videoId;
     }
