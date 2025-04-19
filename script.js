@@ -779,9 +779,14 @@ function playVideo(videoId) {
 
     // Check if player is initialized AND ready
     if (ytPlayer && isPlayerReady) {
-        console.log("Player exists and is ready. Loading video:", videoId);
+        console.log("Player exists and is ready. Loading and playing video:", videoId);
         try {
+            // Use loadVideoById to load the video
             ytPlayer.loadVideoById(videoId);
+            // Explicitly call playVideo() right after loading.
+            // This might reinforce the user-initiated playback signal on some browsers.
+            ytPlayer.playVideo();
+
             // Scroll player into view smoothly, slight delay can help
             setTimeout(() => {
                 if (playerWrapperEl.offsetParent !== null) { // Check if element is visible before scrolling
@@ -789,8 +794,8 @@ function playVideo(videoId) {
                 }
             }, 100);
         } catch (error) {
-            console.error("Error calling loadVideoById:", error);
-            showToast("Failed to load video in player.", "error");
+            console.error("Error calling loadVideoById or playVideo:", error);
+            showToast("Failed to load or play video in player.", "error");
             stopVideo(); // Reset state if loading fails
             playerWrapperEl.classList.add('hidden'); // Hide player if unusable
             videoIdToPlayOnReady = null; // Clear any queue if loading failed
@@ -799,16 +804,12 @@ function playVideo(videoId) {
         // Player not ready or not initialized yet, queue the video ID
         console.log(`Player not ready (Player: ${!!ytPlayer}, Ready: ${isPlayerReady}). Queuing video:`, videoId);
         videoIdToPlayOnReady = videoId;
-        // If the player doesn't even exist yet, onYouTubeIframeAPIReady will eventually create it,
-        // and onPlayerReady will pick up the queued video.
-        // If the player exists but isn't ready, onPlayerReady will pick it up.
-
-        // Optional: Show a loading state on the player itself
-        // e.g., display a message inside the #player div or on the wrapper
-        // Example: document.getElementById('player').innerHTML = '<p>Loading player...</p>';
+        // The onPlayerReady handler will call playVideo(videoIdToPlayOnReady) again,
+        // and the playVideo logic above will then execute, including the playVideo() call.
     }
 
     // --- Media Session Update ---
+    // Metadata is already set here. Playback state will be updated in onPlayerStateChange.
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     if (currentPlaylist) {
         const videoData = currentPlaylist.videos.find(v => v.id === videoId);
