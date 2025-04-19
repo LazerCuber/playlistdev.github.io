@@ -1019,26 +1019,17 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
 
 
 function playVideo(videoId) {
-    if (!videoId) { console.error("playVideo: Invalid videoId."); return; }
-    const currentPlaylist = getCurrentPlaylist();
-    if (!currentPlaylist) { console.error("playVideo: No current playlist."); return; }
-    const videoData = currentPlaylist.videos.find(v => v.id === videoId);
-    if (!videoData) { console.error(`playVideo: Video ${videoId} not found in playlist.`); return; }
+    if (!videoId) return;
 
+    // Ensure this is called within a user interaction
     intendedVideoId = videoId;
     playerWrapperEl.classList.remove('hidden');
-    updatePlayingVideoHighlight(videoId);
-
-    // Update Media Session metadata immediately
-    updateMediaSessionMetadata(videoData);
-
-    // Ensure AudioContext is active
-    ensureAudioContext();
 
     if (ytPlayer && isPlayerReady) {
-        setTimeout(() => {
-            ytPlayer.loadVideoById(videoId);
-        }, 10);
+        // Play immediately (required for lock screen controls)
+        ytPlayer.playVideo().catch(error => {
+            console.error('Initial play failed:', error);
+        });
     } else {
         videoIdToPlayOnReady = videoId;
     }
