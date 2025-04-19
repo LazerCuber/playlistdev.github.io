@@ -99,6 +99,16 @@ function init() {
     // Try to create AudioContext early (might start suspended)
     // User interaction will be needed to properly start/resume it.
     ensureAudioContext();
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then((registration) => {
+          console.log('Service Worker registered with scope:', registration.scope);
+        })
+        .catch((error) => {
+          console.log('Service Worker registration failed:', error);
+        });
+    }
 }
 
 // --- Local Storage & State Helpers ---
@@ -148,44 +158,36 @@ function getCurrentPlaylist() {
 function ensureAudioContext() {
     if (!audioContext) {
         try {
-            // Standard context
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             console.log("AudioContext created. Initial state:", audioContext.state);
-            // If it starts running right away (less common without interaction), play silence.
             if (audioContext.state === 'running') {
                 playSilentSound();
             }
-            // Add listeners for state changes (optional but good practice)
             audioContext.onstatechange = () => {
                 console.log("AudioContext state changed to:", audioContext.state);
                 if (audioContext.state === 'running') {
-                    playSilentSound(); // Ensure silence plays if context resumes unexpectedly
+                    playSilentSound();
                 }
             };
         } catch (e) {
             console.error("Web Audio API not supported or context creation failed.", e);
-            audioContext = null; // Ensure it's null on failure
+            audioContext = null;
             return false;
         }
     }
 
-    // If context exists but is suspended, try to resume it.
-    // This often requires a recent user gesture.
     if (audioContext && audioContext.state === 'suspended') {
         console.log("AudioContext suspended. Attempting to resume...");
         audioContext.resume().then(() => {
             console.log("AudioContext resumed successfully. State:", audioContext.state);
-            // playSilentSound(); // State change handler should now trigger this
         }).catch(e => {
-            // This warning is common if resume is called without a direct user action
             console.warn("Failed to resume AudioContext automatically (may need user interaction):", e);
         });
     } else if (audioContext && audioContext.state === 'running') {
-        // If already running, ensure silent sound is playing (it might have stopped unexpectedly)
         playSilentSound();
     }
 
-    return !!audioContext; // Return true if context exists
+    return !!audioContext;
 }
 
 /**
@@ -579,12 +581,13 @@ function onYouTubeIframeAPIReady() {
             playerVars: { 
                 'playsinline': 1, 
                 'rel': 0,
-                // Add these crucial parameters for background audio playback
                 'enablejsapi': 1,
                 'fs': 0,
                 'modestbranding': 1,
                 'iv_load_policy': 3,
-                'disablekb': 1
+                'disablekb': 1,
+                'autoplay': 1, // Ensure autoplay is enabled
+                'controls': 0  // Hide default controls (optional)
             },
             events: {
                 'onReady': onPlayerReady,
@@ -622,17 +625,15 @@ function configureBackgroundAudio() {
 function onPlayerReady(event) {
     console.log("Player Ready.");
     isPlayerReady = true;
-    // *** Try to ensure context is running when player is ready ***
-    // This might still be suspended if no user interaction happened yet
-    ensureAudioContext();
+    ensureAudioContext(); // Ensure audio context is active
     setupMediaSessionActionHandlers(); // Setup MediaSession handlers
     configureBackgroundAudio(); // Add this line
     if (videoIdToPlayOnReady) {
         const videoToPlay = videoIdToPlayOnReady;
         videoIdToPlayOnReady = null;
-        // playVideo will call ensureAudioContext again before loading
         playVideo(videoToPlay); // Play the queued video
     }
+    requestWakeLock(); // Request wake lock when player is ready
 }
 
 function onPlayerStateChange(event) {
@@ -644,12 +645,25 @@ function onPlayerStateChange(event) {
         switch (state) {
             case YT.PlayerState.PLAYING:
                 navigator.mediaSession.playbackState = "playing";
+                requestWakeLock(); // Request wake lock when video starts playing
                 break;
             case YT.PlayerState.PAUSED:
                 navigator.mediaSession.playbackState = "paused";
+                if (wakeLock) {
+                    wakeLock.release().then(() => {
+                        console.log('Wake lock released on pause');
+                        wakeLock = null;
+                    });
+                }
                 break;
             case YT.PlayerState.ENDED:
                 navigator.mediaSession.playbackState = "none";
+                if (wakeLock) {
+                    wakeLock.release().then(() => {
+                        console.log('Wake lock released on video end');
+                        wakeLock = null;
+                    });
+                }
                 break;
             // Handle other states as needed
         }
@@ -670,11 +684,9 @@ function onPlayerStateChange(event) {
             intendedVideoId = null; // Clear intention as video finished naturally
             updatePlayingVideoHighlight(null);
             if (isAutoplayEnabled) {
-                // *** Ensure context is active before next play attempt ***
-                // playNextVideo will call ensureAudioContext again before loading
                 playNextVideo(endedVideoId);
             } else {
-                 if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "none";
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "none";
             }
             break;
         // Other states (BUFFERING, CUED, UNSTARTED) don't require immediate action here,
@@ -1455,11 +1467,12 @@ function updateMediaSessionMetadata(video) {
 
     navigator.mediaSession.metadata = new MediaMetadata({
         title: video.title,
-        artist: 'YouTube', // Simplified
-        album: 'Your Playlist Name', // Update this as needed
+        artist: 'YouTube',
+        album: 'Your Playlist',
         artwork: [
             { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' },
-            // Add more sizes if available
+            { src: video.thumbnail.replace('mqdefault', 'hqdefault'), sizes: '480x360', type: 'image/jpeg' },
+            { src: video.thumbnail.replace('mqdefault', 'maxresdefault'), sizes: '1280x720', type: 'image/jpeg' }
         ]
     });
 }
@@ -1469,48 +1482,44 @@ function setupMediaSessionActionHandlers() {
 
     const actions = {
         play: () => {
-            // *** Ensure context active for media session play ***
             ensureAudioContext();
             if (ytPlayer && isPlayerReady && typeof ytPlayer.playVideo === 'function') {
-                // Add a small delay here too, in case resume was needed
-                 console.log("Media Session: Attempting playVideo...");
-                setTimeout(() => ytPlayer.playVideo(), 100); // Increased delay for media session
+                setTimeout(() => ytPlayer.playVideo(), 100);
             } else if (intendedVideoId || currentlyPlayingVideoId) {
-                 console.log("Media Session: Calling playVideo function...");
-                // playVideo already calls ensureAudioContext and handles delay
                 playVideo(intendedVideoId || currentlyPlayingVideoId);
-            } else {
-                 console.log("Media Session: No video to play.");
             }
-             navigator.mediaSession.playbackState = "playing";
+            navigator.mediaSession.playbackState = "playing";
         },
         pause: () => {
             if (ytPlayer && isPlayerReady && typeof ytPlayer.pauseVideo === 'function') {
-                console.log("Media Session: Calling pauseVideo...");
                 ytPlayer.pauseVideo();
             }
-            // *** Keep context active even when paused via media session ***
             ensureAudioContext();
-             navigator.mediaSession.playbackState = "paused";
+            navigator.mediaSession.playbackState = "paused";
         },
         stop: () => {
-             console.log("Media Session: Calling handleClosePlayer...");
-             handleClosePlayer();
+            handleClosePlayer();
         },
         previoustrack: () => {
-            console.log("Media Session: Calling playPreviousVideo...");
-            // playPreviousVideo already calls ensureAudioContext/playVideo
             playPreviousVideo(currentlyPlayingVideoId || intendedVideoId);
         },
         nexttrack: () => {
-            console.log("Media Session: Calling playNextVideo...");
-            // playNextVideo already calls ensureAudioContext/playVideo
             playNextVideo(currentlyPlayingVideoId || intendedVideoId);
+        },
+        seekbackward: (details) => {
+            if (ytPlayer && isPlayerReady) {
+                const currentTime = ytPlayer.getCurrentTime();
+                ytPlayer.seekTo(Math.max(0, currentTime - (details.seekOffset || 10)), true);
+            }
+        },
+        seekforward: (details) => {
+            if (ytPlayer && isPlayerReady) {
+                const currentTime = ytPlayer.getCurrentTime();
+                ytPlayer.seekTo(currentTime + (details.seekOffset || 10), true);
+            }
         }
-        // Seek actions (seekbackward, seekforward, seekto) could be added if desired
     };
 
-    // Set handlers using the actions object
     Object.keys(actions).forEach(action => {
         try {
             navigator.mediaSession.setActionHandler(action, actions[action]);
@@ -1545,41 +1554,21 @@ function attemptResumePlayback() {
     }
 }
 
-// Update the onPlayerStateChange function to handle the paused state
-function onPlayerStateChange(event) {
-    const state = event.data;
-
-    switch (state) {
-        case YT.PlayerState.PLAYING:
-            currentlyPlayingVideoId = intendedVideoId;
-            updateMediaSessionMetadata(currentlyPlayingVideo); // Ensure this is called
-            navigator.mediaSession.playbackState = "playing";
-            break;
-        case YT.PlayerState.PAUSED:
-            navigator.mediaSession.playbackState = "paused";
-            break;
-        case YT.PlayerState.ENDED:
-            navigator.mediaSession.playbackState = "none";
-            break;
-        // Other states can be handled as needed
-    }
-}
-
-// Add this function after the attemptResumePlayback function
+// --- Wake Lock API ---
 async function requestWakeLock() {
-  if (!isWakeLockSupported) return;
-  
-  try {
-    wakeLock = await navigator.wakeLock.request('screen');
-    console.log('Wake lock activated');
+    if (!isWakeLockSupported) return;
     
-    wakeLock.addEventListener('release', () => {
-      console.log('Wake lock released');
-      wakeLock = null;
-    });
-  } catch (err) {
-    console.log(`Wake lock request failed: ${err.name}, ${err.message}`);
-  }
+    try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        console.log('Wake lock activated');
+        
+        wakeLock.addEventListener('release', () => {
+            console.log('Wake lock released');
+            wakeLock = null;
+        });
+    } catch (err) {
+        console.log(`Wake lock request failed: ${err.name}, ${err.message}`);
+    }
 }
 
 // --- Start the app ---
