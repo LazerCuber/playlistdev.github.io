@@ -575,6 +575,7 @@ function updateThemeIcon() {
 function onYouTubeIframeAPIReady() {
     console.log("YT API Ready.");
     if (document.getElementById('player')) {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
         ytPlayer = new YT.Player('player', {
             height: '100%', 
             width: '100%',
@@ -586,8 +587,8 @@ function onYouTubeIframeAPIReady() {
                 'modestbranding': 1,
                 'iv_load_policy': 3,
                 'disablekb': 1,
-                'autoplay': 1, // Ensure autoplay is enabled
-                'controls': 0  // Hide default controls (optional)
+                'autoplay': 1,
+                'controls': 1  // Always show controls
             },
             events: {
                 'onReady': onPlayerReady,
@@ -600,23 +601,25 @@ function onYouTubeIframeAPIReady() {
     }
 }
 
-// Add this code after the player is initialized
-function configureBackgroundAudio() {
-    // Create a hidden audio element to keep audio session active
+// Add this function after the YouTube player initialization:
+function setupIOSMediaSessionFallback() {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (!isIOS) return;
+
     const audioElement = document.createElement('audio');
-    audioElement.setAttribute('id', 'background-audio');
+    audioElement.setAttribute('id', 'ios-audio-fallback');
     audioElement.setAttribute('playsinline', 'true');
     audioElement.setAttribute('webkit-playsinline', 'true');
-    audioElement.setAttribute('loop', 'true');
+    audioElement.loop = true;
     audioElement.src = 'data:audio/mp3;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGFTb25vdGhlcXVlLm9yZwBURU5DAAAAHQAAA1N3aXRjaCBQbHVzIMKpIE5DSCBTb2Z0d2FyZQBUSVQyAAAABgAAAzIyMzUAVFNTRQAAAA8AAANMYXZmNTcuODMuMTAwAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQMSkAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
-    audioElement.volume = 0.001; // Nearly silent, just to keep audio session alive
+    audioElement.volume = 0.001; // Nearly silent
     document.body.appendChild(audioElement);
-    
-    // Play the silent audio when a video starts playing to keep iOS audio session active
+
+    // Play the silent audio when a video starts
     if (ytPlayer && ytPlayer.addEventListener) {
-        ytPlayer.addEventListener('onStateChange', function(e) {
+        ytPlayer.addEventListener('onStateChange', (e) => {
             if (e.data === YT.PlayerState.PLAYING) {
-                audioElement.play().catch(err => console.log('Silent audio play failed:', err));
+                audioElement.play().catch(err => console.log('iOS fallback audio play failed:', err));
             }
         });
     }
@@ -625,15 +628,15 @@ function configureBackgroundAudio() {
 function onPlayerReady(event) {
     console.log("Player Ready.");
     isPlayerReady = true;
-    ensureAudioContext(); // Ensure audio context is active
-    setupMediaSessionActionHandlers(); // Setup MediaSession handlers
-    configureBackgroundAudio(); // Add this line
+    ensureAudioContext();
+    setupMediaSessionActionHandlers();
+    setupIOSMediaSessionFallback();
     if (videoIdToPlayOnReady) {
         const videoToPlay = videoIdToPlayOnReady;
         videoIdToPlayOnReady = null;
-        playVideo(videoToPlay); // Play the queued video
+        playVideo(videoToPlay);
     }
-    requestWakeLock(); // Request wake lock when player is ready
+    requestWakeLock();
 }
 
 function onPlayerStateChange(event) {
@@ -645,7 +648,6 @@ function onPlayerStateChange(event) {
         switch (state) {
             case YT.PlayerState.PLAYING:
                 navigator.mediaSession.playbackState = "playing";
-                setupMediaSessionActionHandlers(); // Set up handlers when playback starts
                 requestWakeLock(); // Request wake lock when video starts playing
                 break;
             case YT.PlayerState.PAUSED:
@@ -1012,52 +1014,18 @@ function playVideo(videoId) {
 
     intendedVideoId = videoId;
     playerWrapperEl.classList.remove('hidden');
-    updatePlayingVideoHighlight(videoId); // Highlight optimistically
+    updatePlayingVideoHighlight(videoId);
 
-    // Update Media Session metadata
-    if ('mediaSession' in navigator) {
-        updateMediaSessionMetadata(videoData);
-        navigator.mediaSession.playbackState = "playing"; // Optimistic state
-    }
-
-    // *** CRITICAL: Ensure AudioContext is active right before playback attempt ***
+    // Ensure AudioContext is active
     ensureAudioContext();
 
     if (ytPlayer && isPlayerReady) {
-        // Only attempt playback if audio context is running or we expect it to resume
-        if (audioContext && (audioContext.state === 'running' || audioContext.state === 'suspended')) {
-            try {
-                // Add a small delay IF the audio context MIGHT have just been resumed
-                // or if we're immediately trying after ensuring it.
-                const delay = (audioContext.state === 'suspended') ? 100 : 50; // Increased delay slightly
-
-                console.log(`playVideo: Scheduling loadVideoById for ${videoId} in ${delay}ms (AudioContext state: ${audioContext.state})`);
-                setTimeout(() => {
-                    if (intendedVideoId === videoId) { // Check if still the intended video
-                         console.log(`playVideo: Executing loadVideoById for ${videoId}`);
-                         ytPlayer.loadVideoById(videoId);
-                    } else {
-                         console.log(`playVideo: Playback for ${videoId} cancelled, different video intended.`);
-                    }
-                    // ytPlayer.playVideo(); // Usually not needed, loadVideoById often autoplays
-                }, delay);
-
-            } catch (error) {
-                console.error("playVideo: Error calling loadVideoById:", error);
-                showToast("Failed to load video.", "error");
-                handlePlayerErrorCleanup(videoId); // Use a common cleanup function
-            }
-        } else {
-             console.warn(`playVideo: Cannot play video ${videoId}. AudioContext not available or in closed state.`);
-             showToast("Audio system not ready. Please interact with the page (click/tap).", "error");
-             handlePlayerErrorCleanup(videoId);
-             handleClosePlayer(); // Hide player if audio isn't ready
-        }
+        // Add a small delay to ensure user interaction is registered
+        setTimeout(() => {
+            ytPlayer.loadVideoById(videoId);
+        }, 100);
     } else {
-        console.log(`Player not ready, queuing video: ${videoId}`);
         videoIdToPlayOnReady = videoId;
-        // Still ensure highlight is set for queued video
-        updatePlayingVideoHighlight(videoId);
     }
 }
 
@@ -1507,9 +1475,16 @@ function setupMediaSessionActionHandlers() {
         nexttrack: () => {
             playNextVideo(currentlyPlayingVideoId || intendedVideoId);
         },
-        seekto: (details) => {
-            if (ytPlayer && isPlayerReady && details.seekTime) {
-                ytPlayer.seekTo(details.seekTime, true);
+        seekbackward: (details) => {
+            if (ytPlayer && isPlayerReady) {
+                const currentTime = ytPlayer.getCurrentTime();
+                ytPlayer.seekTo(Math.max(0, currentTime - (details.seekOffset || 10)), true);
+            }
+        },
+        seekforward: (details) => {
+            if (ytPlayer && isPlayerReady) {
+                const currentTime = ytPlayer.getCurrentTime();
+                ytPlayer.seekTo(currentTime + (details.seekOffset || 10), true);
             }
         }
     };
