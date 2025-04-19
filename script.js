@@ -645,6 +645,7 @@ function onPlayerStateChange(event) {
         switch (state) {
             case YT.PlayerState.PLAYING:
                 navigator.mediaSession.playbackState = "playing";
+                setupMediaSessionActionHandlers(); // Set up handlers when playback starts
                 requestWakeLock(); // Request wake lock when video starts playing
                 break;
             case YT.PlayerState.PAUSED:
@@ -1506,16 +1507,9 @@ function setupMediaSessionActionHandlers() {
         nexttrack: () => {
             playNextVideo(currentlyPlayingVideoId || intendedVideoId);
         },
-        seekbackward: (details) => {
-            if (ytPlayer && isPlayerReady) {
-                const currentTime = ytPlayer.getCurrentTime();
-                ytPlayer.seekTo(Math.max(0, currentTime - (details.seekOffset || 10)), true);
-            }
-        },
-        seekforward: (details) => {
-            if (ytPlayer && isPlayerReady) {
-                const currentTime = ytPlayer.getCurrentTime();
-                ytPlayer.seekTo(currentTime + (details.seekOffset || 10), true);
+        seekto: (details) => {
+            if (ytPlayer && isPlayerReady && details.seekTime) {
+                ytPlayer.seekTo(details.seekTime, true);
             }
         }
     };
