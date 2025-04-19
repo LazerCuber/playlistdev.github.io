@@ -357,25 +357,33 @@ function onPlayerReady(event) {
 }
 
 function onPlayerStateChange(event) {
-    // console.log("Player state changed:", event.data); // Log state changes for debugging
     if (event.data === YT.PlayerState.PLAYING) {
         currentlyPlayingVideoId = getCurrentPlayingVideoIdFromApi();
-        updatePlayingVideoHighlight(currentlyPlayingVideoId); // Highlight the playing video
-        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
-    }
-    if (event.data === YT.PlayerState.ENDED) {
-        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "none"; // Or 'paused'? 'none' seems better for ended.
-        if (isAutoplayEnabled) {
-            playNextVideo();
+        updatePlayingVideoHighlight(currentlyPlayingVideoId);
+
+        // Update Media Session metadata when playback starts
+        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+        if (currentPlaylist) {
+            const videoData = currentPlaylist.videos.find(v => v.id === currentlyPlayingVideoId);
+            if (videoData) {
+                updateMediaSessionMetadata(videoData);
+            }
+        }
+
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = "playing";
         }
     }
     if (event.data === YT.PlayerState.PAUSED) {
-         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = "paused";
+        }
     }
-    // Potentially remove highlight if paused? Maybe not, keep it simple.
-    // if (event.data === YT.PlayerState.PAUSED) {
-    //     updatePlayingVideoHighlight(null);
-    // }
+    if (event.data === YT.PlayerState.ENDED) {
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = "none";
+        }
+    }
 }
 
 // Added a dedicated error handler
@@ -1147,27 +1155,34 @@ function debounce(func, wait) {
 
 function updateMediaSessionMetadata(video) {
     if (!('mediaSession' in navigator)) {
+        // console.log("Media Session API not supported.");
         return;
     }
 
     if (!video) {
         navigator.mediaSession.metadata = null;
         navigator.mediaSession.playbackState = 'none';
+        // console.log("Media Session metadata cleared.");
         return;
     }
 
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     const playlistName = currentPlaylist ? currentPlaylist.name : 'Playlist';
 
+    // console.log("Updating Media Session Metadata for:", video.title);
+
     navigator.mediaSession.metadata = new MediaMetadata({
         title: video.title,
-        artist: 'YouTube', // You can replace this with the actual artist if available
+        artist: 'YouTube', // Replace with channel name if available
         album: playlistName,
         artwork: [
             { src: video.thumbnail.replace('mqdefault', 'hqdefault'), sizes: '480x360', type: 'image/jpeg' },
             { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' },
         ]
     });
+
+    // Update playback state (usually done in onPlayerStateChange)
+    // navigator.mediaSession.playbackState = "playing"; // Set this when playback actually starts
 
     setupMediaSessionActionHandlers(); // Ensure handlers are set up
 }
@@ -1182,7 +1197,10 @@ function setupMediaSessionActionHandlers() {
     navigator.mediaSession.setActionHandler('previoustrack', null);
     navigator.mediaSession.setActionHandler('nexttrack', null);
 
+    // console.log("Setting up Media Session Action Handlers");
+
     navigator.mediaSession.setActionHandler('play', () => {
+        // console.log("Media Session: Play");
         if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
             ytPlayer.playVideo();
              navigator.mediaSession.playbackState = "playing";
@@ -1190,6 +1208,7 @@ function setupMediaSessionActionHandlers() {
     });
 
     navigator.mediaSession.setActionHandler('pause', () => {
+        // console.log("Media Session: Pause");
         if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
             ytPlayer.pauseVideo();
              navigator.mediaSession.playbackState = "paused";
@@ -1197,14 +1216,17 @@ function setupMediaSessionActionHandlers() {
     });
 
     navigator.mediaSession.setActionHandler('stop', () => {
+        // console.log("Media Session: Stop");
         handleClosePlayer(); // Use the existing close/stop function
     });
 
     navigator.mediaSession.setActionHandler('previoustrack', () => {
+        // console.log("Media Session: Previous Track");
         playPreviousVideo();
     });
 
     navigator.mediaSession.setActionHandler('nexttrack', () => {
+        // console.log("Media Session: Next Track");
         playNextVideo();
     });
 }
