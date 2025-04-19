@@ -176,15 +176,20 @@ function ensureAudioContext() {
         }
     }
 
+    // Always attempt to resume if suspended (e.g., after phone unlock)
     if (audioContext && audioContext.state === 'suspended') {
         console.log("AudioContext suspended. Attempting to resume...");
-        audioContext.resume().then(() => {
-            console.log("AudioContext resumed successfully. State:", audioContext.state);
+        return audioContext.resume().then(() => {
+            console.log("AudioContext resumed successfully.");
+            playSilentSound();
+            return true;
         }).catch(e => {
-            console.warn("Failed to resume AudioContext automatically (may need user interaction):", e);
+            console.warn("Failed to resume AudioContext:", e);
+            return false;
         });
     } else if (audioContext && audioContext.state === 'running') {
         playSilentSound();
+        return true;
     }
 
     return !!audioContext;
@@ -623,6 +628,13 @@ function setupIOSMediaSessionFallback() {
             }
         });
     }
+
+    // Also play silent audio when the app comes back to the foreground
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && currentlyPlayingVideoId) {
+            audioElement.play().catch(err => console.log('iOS fallback audio play failed:', err));
+        }
+    });
 }
 
 function onPlayerReady(event) {
@@ -641,59 +653,47 @@ function onPlayerReady(event) {
 
 function onPlayerStateChange(event) {
     const state = event.data;
-    const currentPlaylist = getCurrentPlaylist(); // Get playlist context if needed
+    const currentPlaylist = getCurrentPlaylist();
 
-    // Update Media Session state based on player state
+    // Update Media Session state
     if ('mediaSession' in navigator) {
         switch (state) {
             case YT.PlayerState.PLAYING:
                 navigator.mediaSession.playbackState = "playing";
-                requestWakeLock(); // Request wake lock when video starts playing
+                requestWakeLock();
                 break;
             case YT.PlayerState.PAUSED:
                 navigator.mediaSession.playbackState = "paused";
-                if (wakeLock) {
-                    wakeLock.release().then(() => {
-                        console.log('Wake lock released on pause');
-                        wakeLock = null;
-                    });
-                }
+                if (wakeLock) wakeLock.release().then(() => wakeLock = null);
                 break;
             case YT.PlayerState.ENDED:
                 navigator.mediaSession.playbackState = "none";
-                if (wakeLock) {
-                    wakeLock.release().then(() => {
-                        console.log('Wake lock released on video end');
-                        wakeLock = null;
-                    });
-                }
+                if (wakeLock) wakeLock.release().then(() => wakeLock = null);
                 break;
-            // Handle other states as needed
         }
     }
 
+    // Handle video state changes
     switch (state) {
         case YT.PlayerState.PLAYING:
             currentlyPlayingVideoId = intendedVideoId;
-            updateMediaSessionMetadata(currentlyPlayingVideo); // Ensure this is called
-            navigator.mediaSession.playbackState = "playing";
+            updateMediaSessionMetadata(getCurrentPlaylist()?.videos.find(v => v.id === intendedVideoId));
+            requestWakeLock();
             break;
-        case YT.PlayerState.PAUSED:
-            navigator.mediaSession.playbackState = "paused";
-            break;
+
         case YT.PlayerState.ENDED:
             const endedVideoId = currentlyPlayingVideoId || intendedVideoId;
             currentlyPlayingVideoId = null;
-            intendedVideoId = null; // Clear intention as video finished naturally
+            intendedVideoId = null;
             updatePlayingVideoHighlight(null);
-            if (isAutoplayEnabled) {
+
+            // Autoplay next video if enabled
+            if (isAutoplayEnabled && currentPlaylist) {
                 playNextVideo(endedVideoId);
             } else {
                 if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "none";
             }
             break;
-        // Other states (BUFFERING, CUED, UNSTARTED) don't require immediate action here,
-        // but their MediaSession state is set above.
     }
 }
 
@@ -818,6 +818,19 @@ function selectPlaylist(id) {
 
     renderPlaylists(); // Update active state in the list
     renderVideos(); // Render videos for the selected playlist
+
+    // Preload the first video in the playlist
+    if (selectedPlaylist.videos.length > 0) {
+        const firstVideo = selectedPlaylist.videos[0];
+        preloadVideo(firstVideo.id);
+    }
+}
+
+function preloadVideo(videoId) {
+    if (!ytPlayer || !isPlayerReady) return;
+
+    // Preload the video without autoplaying
+    ytPlayer.cueVideoById(videoId);
 }
 
 function handleClearPlaylist() {
@@ -1033,34 +1046,21 @@ function playVideo(videoId) {
 
 
 function playNextVideo(previousVideoId) {
-    // ensureAudioContext() will be called within playVideo
-
     const currentPlaylist = getCurrentPlaylist();
-    if (!currentPlaylist || currentPlaylist.videos.length < 1) {
+    if (!currentPlaylist || currentPlaylist.videos.length === 0) {
         handleClosePlayer();
         return;
     }
 
-    let currentIndex = -1;
-    if (previousVideoId) {
-        currentIndex = currentPlaylist.videos.findIndex(v => v.id === previousVideoId);
-    }
+    let currentIndex = currentPlaylist.videos.findIndex(v => v.id === previousVideoId);
+    if (currentIndex === -1) currentIndex = 0; // Fallback to first video
 
-    // If previous video not found, or no previous ID, play the first video
-    if (currentIndex === -1 && currentPlaylist.videos.length > 0) {
-        playVideo(currentPlaylist.videos[0].id);
-        return;
-    }
-
-    // Calculate next index, wrapping around
     const nextIndex = (currentIndex + 1) % currentPlaylist.videos.length;
     const nextVideo = currentPlaylist.videos[nextIndex];
 
     if (nextVideo) {
         playVideo(nextVideo.id);
     } else {
-        // Should not happen with modulo logic if list isn't empty
-        console.error("playNextVideo: Could not determine next video. Stopping.");
         handleClosePlayer();
     }
 }
@@ -1500,28 +1500,20 @@ function setupMediaSessionActionHandlers() {
     });
 }
 
-// Add this function after setupMediaSessionActionHandlers()
+// Modify handleVisibilityChange
 function handleVisibilityChange() {
     if (document.hidden) {
-        // If the document is hidden, we can pause the video
-        if (currentlyPlayingVideoId) {
+        // Pause video when app is hidden
+        if (ytPlayer && currentlyPlayingVideoId) {
             ytPlayer.pauseVideo();
         }
     } else {
-        // If the document is visible again, attempt to resume playback
-        attemptResumePlayback();
-    }
-}
-
-// Modify the attemptResumePlayback function
-function attemptResumePlayback() {
-    if (currentlyPlayingVideoId) {
-        ensureAudioContext(); // Ensure the audio context is active
-        setTimeout(() => {
-            if (ytPlayer && isPlayerReady) {
-                ytPlayer.playVideo(); // Attempt to play the video
-            }
-        }, 300); // Delay to allow context to be ready
+        // Resume playback when app is visible again
+        if (ytPlayer && currentlyPlayingVideoId) {
+            ensureAudioContext().then(() => {
+                ytPlayer.playVideo();
+            });
+        }
     }
 }
 
