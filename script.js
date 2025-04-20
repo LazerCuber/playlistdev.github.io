@@ -1357,3 +1357,22 @@ function handleTouchEnd(event) {
 
 // --- Start the app ---
 init();
+
+// Function to update the status bar color based on the current theme
+function updateStatusBarTheme() {
+    const theme = document.documentElement.getAttribute('data-theme');
+    const statusBarMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+
+    if (statusBarMeta) {
+        statusBarMeta.content = theme === 'dark' ? 'black' : 'black-translucent';
+    }
+}
+
+// Call this function whenever the theme changes
+updateStatusBarTheme();
+
+// Example: If you have a theme toggle button, add this to its event listener
+document.getElementById('themeToggleBtn').addEventListener('click', () => {
+    // ... existing theme toggle logic ...
+    updateStatusBarTheme();
+});
