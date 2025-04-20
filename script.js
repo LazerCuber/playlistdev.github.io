@@ -333,6 +333,7 @@ function onYouTubeIframeAPIReady() {
                 'playsinline': 1,  // Already set for inline playback
                 'rel': 0,          // Disable related videos
                 'enablejsapi': 1,  // Ensure JavaScript API is enabled
+                'autoplay': 1      // Autoplay (may help with background playback)
             },
             events: {
                 'onReady': onPlayerReady,
