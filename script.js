@@ -327,12 +327,17 @@ function onYouTubeIframeAPIReady() {
     // Only create player if the element exists
     if (document.getElementById('player')) {
         ytPlayer = new YT.Player('player', {
-            height: '100%', width: '100%',
-            playerVars: { 'playsinline': 1, 'rel': 0 }, // playsinline for mobile, rel=0 to reduce related videos
+            height: '100%', 
+            width: '100%',
+            playerVars: { 
+                'playsinline': 1,  // Already set for inline playback
+                'rel': 0,          // Disable related videos
+                'enablejsapi': 1,  // Ensure JavaScript API is enabled
+            },
             events: {
                 'onReady': onPlayerReady,
                 'onStateChange': onPlayerStateChange,
-                'onError': onPlayerError // Add error handler
+                'onError': onPlayerError
             }
         });
     } else {
