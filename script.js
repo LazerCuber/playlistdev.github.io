@@ -298,8 +298,11 @@ function clearDragOverStyles() {
 
 // --- Theme Management ---
 function loadTheme() {
-    const savedTheme = localStorage.getItem('uiTheme') || 'light';
-    applyTheme(savedTheme);
+    const savedTheme = localStorage.getItem('uiTheme'); // Check for saved theme
+    // If no saved theme, check the HTML attribute, otherwise default to 'light' (or 'dark' if you change the line below)
+    const initialTheme = htmlEl.getAttribute('data-theme') || 'light'; // Read initial value from HTML
+    const themeToApply = savedTheme || initialTheme; // Prefer saved, then initial HTML, then hardcoded default
+    applyTheme(themeToApply);
 }
 function applyTheme(themeName) {
     currentTheme = themeName;
