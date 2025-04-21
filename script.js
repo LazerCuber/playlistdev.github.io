@@ -389,6 +389,7 @@ function onPlayerStateChange(event) {
         if ('mediaSession' in navigator) {
             navigator.mediaSession.playbackState = "none";
         }
+        playNextVideo();
     }
 }
 
