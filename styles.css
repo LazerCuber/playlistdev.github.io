@@ -56,6 +56,7 @@
             --text-color-subtle: #888888;
             /* Lighter subtle grey */
             --border-color: #e0e0e0;
+            --border-color-second: #e0e0e0;
             /* Lighter border */
             --border-color-light: #ebebeb;
             --hover-bg-color: #f0f0f0;
@@ -96,6 +97,8 @@
             --border-color-light: #282828;
             /* Second Color */
             --border-color-second: #333333;
+            /* Button Color */
+            --button-color: #26272b;
             /* Subtle inner border */
             --hover-bg-color: #2c2c2c;
             /* Darker hover */
@@ -110,8 +113,6 @@
             --resizer-hover-color: var(--primary-color);
             /* Add Primary RGB for potential use */
             --primary-color-rgb: 229, 115, 115;
-            /* Button Colour */
-            --button-color: #26272b;
         }
 
 
@@ -771,7 +772,8 @@
         }
 
         html[data-theme="dark"] .video-card.playing {
-            background-color: rgba(var(--primary-color-rgb), 0.15); /* Slightly more pronounced background */
+            background-color: rgba(var(--primary-color-rgb), 0.15);
+            /* Slightly more pronounced background */
             border-color: var(--primary-color-dark);
         }
 
@@ -1083,7 +1085,8 @@
                 /* Ensure it stays in flow */
                 flex-shrink: 1;
                 /* Allow sidebar to shrink if needed, though unlikely now */
-                order: 2; /* Display after main content */
+                order: 2;
+                /* Display after main content */
             }
 
             .sidebar-resizer {
@@ -1115,7 +1118,8 @@
                 /* Reduce padding */
                 overflow-y: visible;
                 /* Allow content to scroll with the body */
-                order: 1; /* Display before sidebar */
+                order: 1;
+                /* Display before sidebar */
             }
 
             .main-header {
@@ -1160,7 +1164,8 @@
             input[type="text"],
             input[type="url"],
             input[type="search"] {
-                font-size: 16px; /* Prevent auto-zoom on iOS */
+                font-size: 16px;
+                /* Prevent auto-zoom on iOS */
             }
 
             .player-wrapper {
@@ -1243,15 +1248,19 @@
 
             /* --- Mobile Tap Feedback --- */
             .playlist-item:active {
-                background-color: var(--hover-bg-color); /* Reuse hover color for feedback */
-                transition: background-color 0.05s ease-out; /* Faster feedback transition */
+                background-color: var(--hover-bg-color);
+                /* Reuse hover color for feedback */
+                transition: background-color 0.05s ease-out;
+                /* Faster feedback transition */
             }
 
             .video-card:active {
-                transform: scale(0.98); /* Slight shrink effect */
+                transform: scale(0.98);
+                /* Slight shrink effect */
                 background-color: var(--hover-bg-color);
                 transition: background-color 0.05s ease-out, transform 0.05s ease-out;
             }
+
             /* --- End Mobile Tap Feedback --- */
 
         }
