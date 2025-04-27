@@ -1097,7 +1097,6 @@
             .sidebar-content {
                 /* Adjust padding slightly */
                 padding: 16px;
-                max-height: 50vh;
                 /* Limit height to prevent excessive scrolling */
                 overflow-y: auto;
                 /* Ensure it's scrollable if content overflows */
