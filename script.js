@@ -25,6 +25,7 @@ const closePlayerBtn = document.getElementById('closePlayerBtn');
 const sidebarEl = document.querySelector('.sidebar');
 const sidebarResizerEl = document.getElementById('sidebarResizer');
 const shufflePlaylistBtn = document.getElementById('shufflePlaylistBtn'); // Added
+const audioOnlyToggle = document.getElementById('audioOnlyToggle'); // Added
 // Pagination Elements
 const paginationControlsEl = document.getElementById('paginationControls');
 const prevPageBtn = document.getElementById('prevPageBtn');
@@ -38,6 +39,7 @@ let ytPlayer = null;
 let isPlayerReady = false; // New state variable
 let videoIdToPlayOnReady = null; // New state variable
 let isAutoplayEnabled = false;
+let isAudioOnlyMode = false; // Added state for audio-only
 let currentlyPlayingVideoId = null;
 let draggedVideoId = null; // ID of the video being dragged
 let dragTargetElement = null; // Element we are dragging over
@@ -71,6 +73,7 @@ function init() {
     loadTheme();
     loadPlaylists();
     loadAutoplaySetting();
+    loadAudioOnlySetting(); // Added
     loadSidebarWidth();
     renderPlaylists();
 
@@ -145,7 +148,16 @@ function setupEventListeners() {
     videoUrlInput.addEventListener('keypress', (e) => { if (e.key === 'Enter' && !addVideoBtn.disabled) handleAddVideo(); });
     videoUrlInput.addEventListener('input', () => { addVideoBtn.disabled = videoUrlInput.value.trim() === ''; }); // Enable/disable add button
     autoplayToggle.addEventListener('change', handleAutoplayToggle);
+    audioOnlyToggle.addEventListener('change', handleAudioOnlyToggle); // Listener for the checkbox change
+
+    // Attach the visual click handler to the parent .switch element for both toggles
     autoplaySwitchDiv.addEventListener('click', handleVisualSwitchClick);
+    // Ensure we target the correct parent switch for audio-only as well
+    const audioOnlySwitchDiv = audioOnlyToggle.closest('.switch');
+    if (audioOnlySwitchDiv) {
+        audioOnlySwitchDiv.addEventListener('click', handleVisualSwitchClick);
+    }
+
     clearPlaylistBtn.addEventListener('click', handleClearPlaylist);
     themeToggleBtn.addEventListener('click', toggleTheme);
     shufflePlaylistBtn.addEventListener('click', handleShufflePlaylist); // Added
@@ -236,64 +248,91 @@ function handleDragStart(event) {
 }
 
 function handleDragEnd(event) {
+    // Ensure dragging class is removed
     const draggingElement = videoGridEl.querySelector('.video-card.dragging');
     if (draggingElement) {
         draggingElement.classList.remove('dragging');
     }
+    // Ensure highlight styles are cleared definitively
     clearDragOverStyles();
+    // Reset state variables
     draggedVideoId = null;
     dragTargetElement = null;
 }
 
 function handleDragOver(event) {
     event.preventDefault(); // Necessary to allow drop
-    if (!draggedVideoId) return; // Only react if dragging started within the grid
+    if (!draggedVideoId) return;
+    event.dataTransfer.dropEffect = 'move'; // Assume move is possible
 
     const targetCard = event.target.closest('.video-card');
+
+    // Determine the current valid target card
+    let currentTarget = null;
     if (targetCard && targetCard.dataset.videoId !== draggedVideoId) {
-        // Only add drag-over style if it's a new target or different from the current one
-        if (dragTargetElement !== targetCard) {
-            clearDragOverStyles(); // Clear previous styles
-            targetCard.classList.add('drag-over');
-            dragTargetElement = targetCard;
-        }
-        event.dataTransfer.dropEffect = 'move';
-    } else {
-        // If hovering over empty space or the dragged item itself, clear styles
+        currentTarget = targetCard;
+    }
+
+    // If the target is different from the currently highlighted one
+    if (currentTarget !== dragTargetElement) {
+        // Remove highlight from the previous target (if any)
         if (dragTargetElement) {
-            clearDragOverStyles();
-            dragTargetElement = null;
+            dragTargetElement.classList.remove('drag-over');
         }
-        event.dataTransfer.dropEffect = 'none'; // Indicate not droppable here
+        // Add highlight to the new target (if any)
+        if (currentTarget) {
+            currentTarget.classList.add('drag-over');
+        }
+        // Update the tracked target element
+        dragTargetElement = currentTarget;
+    }
+
+    // If not over a valid target card, ensure no highlight (handled by the logic above)
+    if (!currentTarget) {
+         event.dataTransfer.dropEffect = 'none'; // Indicate not droppable here
     }
 }
 
 function handleDragLeave(event) {
-    // Check if the mouse truly left the potential drop target
-    const targetCard = event.target.closest('.video-card');
-    if (targetCard && targetCard === dragTargetElement && !targetCard.contains(event.relatedTarget)) {
-        clearDragOverStyles();
+    // Only clear styles if the mouse leaves the bounds of the entire video grid container.
+    // This prevents flicker when moving between cards.
+    if (!event.relatedTarget || !videoGridEl.contains(event.relatedTarget)) {
+        if (dragTargetElement) {
+            dragTargetElement.classList.remove('drag-over');
+        }
         dragTargetElement = null;
+         // console.log("Left grid boundary"); // Optional debug log
     }
+     // Note: dragover handles clearing when moving between cards within the grid.
 }
 
 function handleDrop(event) {
     event.preventDefault();
-    clearDragOverStyles();
-    const targetCard = event.target.closest('.video-card');
-    const dropTargetId = targetCard ? targetCard.dataset.videoId : null;
+    const dropTargetId = dragTargetElement ? dragTargetElement.dataset.videoId : null;
 
-    if (draggedVideoId && dropTargetId !== draggedVideoId) {
+    // Clear styles regardless of drop validity
+    clearDragOverStyles();
+
+    if (draggedVideoId && dropTargetId && dropTargetId !== draggedVideoId) {
+        // Call the reorder function
         handleReorderVideo(draggedVideoId, dropTargetId);
+    } else {
+        console.log("Drop occurred on invalid target or self.");
     }
-    draggedVideoId = null;
-    dragTargetElement = null;
+
+    // Resetting state happens in handleDragEnd, which is called after drop
 }
 
 function clearDragOverStyles() {
-    videoGridEl.querySelectorAll('.video-card.drag-over').forEach(card => {
-        card.classList.remove('drag-over');
-    });
+    // Remove the original drag-over class from any card that might have it
+    const highlightedCard = videoGridEl.querySelector('.video-card.drag-over');
+    if(highlightedCard) {
+        highlightedCard.classList.remove('drag-over');
+    }
+    // It's also safe to clear from dragTargetElement if it exists
+    if (dragTargetElement) {
+         dragTargetElement.classList.remove('drag-over');
+    }
 }
 
 // --- Theme Management ---
@@ -501,6 +540,24 @@ function saveAutoplaySetting() { localStorage.setItem('autoplayEnabled', isAutop
 function loadAutoplaySetting() {
     isAutoplayEnabled = localStorage.getItem('autoplayEnabled') === 'true';
     autoplayToggle.checked = isAutoplayEnabled;
+}
+
+// Added functions for audio-only state
+function saveAudioOnlySetting() { localStorage.setItem('audioOnlyEnabled', isAudioOnlyMode); }
+function loadAudioOnlySetting() {
+    isAudioOnlyMode = localStorage.getItem('audioOnlyEnabled') === 'true';
+    audioOnlyToggle.checked = isAudioOnlyMode;
+    // Apply the class initially if needed
+    applyAudioOnlyClass();
+}
+
+// Function to apply/remove the class based on state
+function applyAudioOnlyClass() {
+    if (isAudioOnlyMode) {
+        bodyEl.classList.add('audio-only-active');
+    } else {
+        bodyEl.classList.remove('audio-only-active');
+    }
 }
 
 // --- Playlist Management ---
@@ -750,6 +807,7 @@ function handleDeleteVideo(videoId) {
     showToast(`Removed "${escapeHTML(videoTitle)}".`, 'info');
 }
 
+// Modified to accept dropEffect ('before' or 'after')
 function handleReorderVideo(videoIdToMove, targetVideoId) {
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     if (!currentPlaylist) return;
@@ -759,30 +817,37 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
 
     const [videoToMove] = currentPlaylist.videos.splice(videoToMoveIndex, 1); // Remove the video
 
-    if (targetVideoId === null) {
-        // Dropped at the end (or empty space)
-        currentPlaylist.videos.push(videoToMove);
+    // Find the target's NEW index after the splice
+    const targetIndex = currentPlaylist.videos.findIndex(v => v.id === targetVideoId);
+
+    if (targetIndex !== -1) {
+        // Original behavior: Always insert *before* the target video's new position
+        currentPlaylist.videos.splice(targetIndex, 0, videoToMove);
     } else {
-        const targetIndex = currentPlaylist.videos.findIndex(v => v.id === targetVideoId);
-        if (targetIndex !== -1) {
-            // Insert before the target video
-            currentPlaylist.videos.splice(targetIndex, 0, videoToMove);
-        } else {
-            // Target not found (should not happen if drag logic is correct), append to end
-            currentPlaylist.videos.push(videoToMove);
-        }
+        // Target not found, append to end as fallback
+        console.warn("Reorder target not found after splice, appending video to end.");
+        currentPlaylist.videos.push(videoToMove);
     }
 
     savePlaylists();
     renderVideos(); // Re-render the grid with the new order
-    // No toast needed for reorder unless desired
 }
 
 function playVideo(videoId) {
     // Ensure the player container is visible first
-    playerWrapperEl.classList.remove('hidden');
+    // UNLESS we are in audio-only mode
+    if (!isAudioOnlyMode) {
+        playerWrapperEl.classList.remove('hidden');
+    } else {
+        // If audio-only is active, ensure the wrapper *is* shown
+        // (because the CSS will hide the inner container)
+        // but don't scroll to it.
+         playerWrapperEl.classList.remove('hidden');
+    }
+
     currentlyPlayingVideoId = videoId; // Set this immediately for state tracking
     updatePlayingVideoHighlight(videoId); // Highlight the selected video immediately
+    applyAudioOnlyClass(); // Ensure correct class is applied
 
     // Check if player is initialized AND ready
     if (ytPlayer && isPlayerReady) {
@@ -794,17 +859,18 @@ function playVideo(videoId) {
             // This might reinforce the user-initiated playback signal on some browsers.
             ytPlayer.playVideo();
 
-            // Scroll player into view smoothly, slight delay can help
-            setTimeout(() => {
-                if (playerWrapperEl.offsetParent !== null) { // Check if element is visible before scrolling
-                    playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                }
-            }, 100);
+            // Scroll player into view smoothly, but only if not in audio-only mode
+            if (!isAudioOnlyMode) {
+                setTimeout(() => {
+                    if (playerWrapperEl.offsetParent !== null) { // Check if element is visible before scrolling
+                        playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                }, 100);
+            }
         } catch (error) {
             console.error("Error calling loadVideoById or playVideo:", error);
             showToast("Failed to load or play video in player.", "error");
-            stopVideo(); // Reset state if loading fails
-            playerWrapperEl.classList.add('hidden'); // Hide player if unusable
+            handleClosePlayer(); // Reset state if loading fails
             videoIdToPlayOnReady = null; // Clear any queue if loading failed
         }
     } else {
@@ -842,6 +908,7 @@ function stopVideo() {
         // Don't clear metadata here, handleClosePlayer might do it
         // updateMediaSessionMetadata(null);
     }
+    // Don't hide player wrapper here, handleClosePlayer does that
 }
 
 function extractVideoId(url) {
@@ -977,6 +1044,36 @@ function handleAutoplayToggle() {
     showToast(`Autoplay ${isAutoplayEnabled ? 'enabled' : 'disabled'}.`, 'info');
 }
 
+// Added handler for the new toggle
+function handleAudioOnlyToggle() {
+    isAudioOnlyMode = audioOnlyToggle.checked;
+    saveAudioOnlySetting();
+    applyAudioOnlyClass(); // Apply/remove the class immediately
+    showToast(`Audio-Only Mode ${isAudioOnlyMode ? 'enabled' : 'disabled'}.`, 'info');
+
+    // If a video is currently playing, adjust visibility/scrolling
+    if (currentlyPlayingVideoId) {
+        if (isAudioOnlyMode) {
+            // No need to scroll, CSS handles hiding the video
+             playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible
+        } else {
+            // Show video and scroll into view if it was hidden
+            playerWrapperEl.classList.remove('hidden');
+            setTimeout(() => {
+                 if (playerWrapperEl.offsetParent !== null) {
+                    playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                 }
+            }, 100);
+        }
+    } else {
+         // If no video playing, ensure player wrapper is hidden if audio-only is disabled
+         // and no video is selected to play next
+         if (!isAudioOnlyMode && !videoIdToPlayOnReady) {
+            playerWrapperEl.classList.add('hidden');
+         }
+    }
+}
+
 // --- Import / Export ---
 function handleExportPlaylists() {
     if (playlists.length === 0) {
@@ -1064,15 +1161,21 @@ function handleImportPlaylists(event) {
 }
 
 function handleVisualSwitchClick(event) {
-    // We only want to react if the click wasn't directly on the hidden input itself
-    // (though that's unlikely as it's visually hidden).
-    // This primarily ensures clicking the visual parts (slider/background) works.
-    // The label click is handled natively by the 'for' attribute.
-    if (event.target !== autoplayToggle) {
-        // Programmatically click the hidden checkbox.
+    // Find the parent switch element that was clicked
+    const switchElement = event.target.closest('.switch');
+    if (!switchElement) return; // Exit if click wasn't within a switch
+
+    // Find the actual checkbox input within this specific switch
+    const checkbox = switchElement.querySelector('input[type="checkbox"]');
+    if (!checkbox) return; // Exit if no checkbox found
+
+    // We only want to react if the click wasn't directly on the hidden input itself.
+    // This ensures clicking the visual parts (slider/background) triggers the toggle.
+    if (event.target !== checkbox) {
+        // Programmatically click the associated hidden checkbox.
         // This will toggle its 'checked' state AND trigger the 'change' event listener
-        // that we already have attached (handleAutoplayToggle).
-        autoplayToggle.click();
+        // (e.g., handleAutoplayToggle or handleAudioOnlyToggle).
+        checkbox.click();
     }
 }
 
@@ -1120,6 +1223,7 @@ function showToast(message, type = 'info', duration = 3000) {
 function handleClosePlayer() {
     stopVideo(); // stopVideo now handles removing the highlight
     playerWrapperEl.classList.add('hidden');
+    bodyEl.classList.remove('audio-only-active'); // Ensure class is removed on close
     if ('mediaSession' in navigator) { // Clear media session on explicit close
         updateMediaSessionMetadata(null);
     }
@@ -1287,37 +1391,39 @@ function handleTouchStart(event) {
 function handleTouchMove(event) {
     if (!isTouchDragging || !touchDraggedElement) return;
 
-    event.preventDefault(); // *** Crucial: Prevent page scrolling while dragging ***
+    event.preventDefault();
 
     const touch = event.touches[0];
-    const currentY = touch.clientY;
 
-    // Find the element under the current touch position
-    // Temporarily hide the dragged element to find what's underneath
     touchDraggedElement.style.visibility = 'hidden';
     const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
-    touchDraggedElement.style.visibility = ''; // Restore visibility
+    touchDraggedElement.style.visibility = '';
 
     const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card') : null;
 
-    // Clear previous drag-over styles
-    clearDragOverStyles();
-
+    // Determine the current valid target card for touch
+    let currentTouchTarget = null;
     if (targetCard && targetCard !== touchDraggedElement) {
-        targetCard.classList.add('drag-over');
-        dragTargetElement = targetCard; // Use the same variable as mouse drag for consistency
-    } else {
-        dragTargetElement = null; // No valid drop target under finger
+        currentTouchTarget = targetCard;
     }
 
-    // Optional: Move the element visually with the touch (more complex)
-    // const deltaY = currentY - touchDragStartY;
-    // touchDraggedElement.style.transform = `translateY(${deltaY}px)`;
+    // If the target is different from the currently highlighted one
+    if (currentTouchTarget !== dragTargetElement) {
+        // Remove highlight from the previous target (if any)
+        if (dragTargetElement) {
+            dragTargetElement.classList.remove('drag-over');
+        }
+        // Add highlight to the new target (if any)
+        if (currentTouchTarget) {
+            currentTouchTarget.classList.add('drag-over');
+        }
+        // Update the tracked target element
+        dragTargetElement = currentTouchTarget;
+    }
 }
 
 function handleTouchEnd(event) {
     if (!isTouchDragging || !touchDraggedElement) {
-         // If not dragging, ensure any potentially added classes are removed
          clearDragOverStyles();
          if (touchDraggedElement) touchDraggedElement.classList.remove('dragging');
          isTouchDragging = false;
@@ -1327,29 +1433,21 @@ function handleTouchEnd(event) {
         return;
     }
 
-    // Reset visual styles
-    touchDraggedElement.classList.remove('dragging');
-    // touchDraggedElement.style.transform = ''; // Reset transform if applied in touchmove
-    clearDragOverStyles();
-
-
     const dropTargetId = dragTargetElement ? dragTargetElement.dataset.videoId : null;
 
-    // Perform the drop action if a valid target was identified
+    // Reset visual styles first
+    touchDraggedElement.classList.remove('dragging');
+    clearDragOverStyles(); // Clear highlight
+
+    // Perform the drop action
     if (draggedVideoId && dropTargetId && dropTargetId !== draggedVideoId) {
         handleReorderVideo(draggedVideoId, dropTargetId);
-        // Provide haptic feedback for successful drop
         if (navigator.vibrate) {
-             navigator.vibrate([50, 50, 50]); // Pattern for success feedback
+             navigator.vibrate([50, 50, 50]);
         }
-    } else if (draggedVideoId && !dropTargetId) {
-        // Check if dropped outside any specific card (potentially at the end)
-        // This logic might need refinement based on exact desired behavior
-        // For now, we'll assume dropping outside means "cancel" or "no change"
-        // If dropping at the end is desired, more complex logic is needed to find the last element.
     }
 
-    // Reset state AFTER potential reorder
+    // Reset state variables
     isTouchDragging = false;
     draggedVideoId = null;
     touchDraggedElement = null;

@@ -713,6 +713,34 @@
             padding-bottom: 56.25%;
             height: 0;
             overflow: hidden;
+            transition: opacity var(--transition-speed) ease-in-out, height var(--transition-speed) ease-in-out;
+        }
+
+        /* Style to hide the video when audio-only is active */
+        body.audio-only-active .player-container {
+            height: 0 !important;
+            padding-bottom: 0 !important;
+            overflow: hidden;
+            opacity: 0;
+        }
+
+        /* Keep the wrapper visible but maybe add an indicator? */
+        body.audio-only-active .player-wrapper {
+            min-height: 30px;
+            background-color: var(--surface-color-alt);
+            box-shadow: var(--shadow-sm);
+        }
+
+        /* Ensure close button is still visible and positioned correctly */
+        body.audio-only-active .close-player-btn {
+            top: 50%;
+            transform: translateY(-50%);
+            background-color: transparent;
+            color: var(--icon-color);
+        }
+        body.audio-only-active .close-player-btn:hover {
+            background-color: var(--hover-bg-color);
+            color: var(--icon-color-hover);
         }
 
         #player {
@@ -760,7 +788,7 @@
             box-shadow: var(--shadow-lg);
             transform: scale(0.98);
             cursor: grabbing;
-            border-color: var(--primary-color);
+            /* border-color: var(--primary-color); */ /* Removed border */
             background: var(--surface-color-alt);
         }
 
@@ -769,36 +797,39 @@
             border-color: var(--primary-color);
             box-shadow: var(--shadow-md);
             background-color: var(--primary-color-light);
+            /* Keep the transparent border placeholder for consistency */
+            border-width: 1px;
+            border-style: solid;
         }
 
         html[data-theme="dark"] .video-card.playing {
             background-color: rgba(var(--primary-color-rgb), 0.15);
-            /* Slightly more pronounced background */
             border-color: var(--primary-color-dark);
         }
 
-        /* Style for the drop target indicator */
+        /* Remove ::before/::after and inset box-shadow styles */
+        /*
+        .video-card::before,
+        .video-card::after { ... }
+        .video-card::before { ... }
+        .video-card::after { ... }
+        .video-card.drag-over-top::before,
+        .video-card.drag-over-bottom::after { ... }
+        .video-card.drag-over-top { ... }
+        .video-card.drag-over-bottom { ... }
+        */
+
+        /* Restore the original drag-over outline style */
         .video-card.drag-over {
-            box-shadow: var(--shadow-md);
+            box-shadow: var(--shadow-md); /* Keep hover shadow */
             /* Use border or outline for drop indicator */
             outline: 2px dashed var(--primary-color);
-            outline-offset: -2px;
-            /* Inside the card */
+            outline-offset: -2px; /* Inside the card */
         }
 
-        /* Optional: Add space indicator between cards */
-        .drop-indicator {
-            height: 40px;
-            /* Adjust height as needed */
-            background-color: rgba(var(--primary-color-rgb), 0.1);
-            /* Use RGB version */
-            border: 1px dashed var(--primary-color);
-            border-radius: var(--border-radius-md);
-            margin: 10px 0;
-            /* Match gap */
-            grid-column: 1 / -1;
-            /* Span across grid columns */
-        }
+
+        /* Optional: Add space indicator between cards (Removed as we use ::before/::after now) */
+        /* .drop-indicator { ... } */
 
 
         .thumbnail-wrapper {
