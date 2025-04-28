@@ -179,7 +179,7 @@ function setupEventListeners() {
             event.stopPropagation(); handleRenamePlaylist(playlistId);
         } else if (event.target.closest('.delete-btn')) {
             event.stopPropagation(); handleDeletePlaylist(playlistId);
-        } else {
+        } else if (!event.target.closest('.controls')) {
             selectPlaylist(playlistId);
         }
     });
@@ -226,6 +226,13 @@ function setupEventListeners() {
     videoGridEl.addEventListener('touchmove', handleTouchMove, { passive: false }); // Need passive: false for preventDefault
     videoGridEl.addEventListener('touchend', handleTouchEnd);
     videoGridEl.addEventListener('touchcancel', handleTouchEnd); // Treat cancel same as end
+
+    // Playlist Drag & Drop Listeners (New)
+    playlistListEl.addEventListener('dragstart', handlePlaylistDragStart);
+    playlistListEl.addEventListener('dragend', handlePlaylistDragEnd);
+    playlistListEl.addEventListener('dragover', handlePlaylistDragOver);
+    playlistListEl.addEventListener('dragleave', handlePlaylistDragLeave);
+    playlistListEl.addEventListener('drop', handlePlaylistDrop);
 }
 
 // --- Drag and Drop ---
@@ -935,6 +942,7 @@ function renderPlaylists() {
             const li = document.createElement('li');
             li.className = `playlist-item ${playlist.id === currentPlaylistId ? 'active' : ''}`;
             li.dataset.id = playlist.id;
+            li.draggable = true; // Make the playlist item draggable
             li.innerHTML = `
                         <span class="playlist-name">${escapeHTML(playlist.name)}</span>
                         <span class="playlist-count">${playlist.videos.length}</span>
@@ -1452,6 +1460,115 @@ function handleTouchEnd(event) {
     draggedVideoId = null;
     touchDraggedElement = null;
     dragTargetElement = null;
+}
+
+// --- Drag and Drop (Playlists) ---
+let draggedPlaylistId = null;
+let dragTargetPlaylistElement = null;
+
+function handlePlaylistDragStart(event) {
+    const playlistItem = event.target.closest('.playlist-item');
+    if (playlistItem && playlistItem.draggable) {
+        // Prevent dragging if clicking on controls inside the item
+        if (event.target.closest('.controls')) {
+            event.preventDefault();
+            return;
+        }
+        draggedPlaylistId = parseInt(playlistItem.dataset.id);
+        event.dataTransfer.effectAllowed = 'move';
+        // event.dataTransfer.setData('text/plain', draggedPlaylistId); // Optional
+        setTimeout(() => playlistItem.classList.add('dragging'), 0);
+        dragTargetPlaylistElement = null; // Reset target
+    }
+}
+
+function handlePlaylistDragEnd(event) {
+    const playlistItem = event.target.closest('.playlist-item.dragging');
+    if (playlistItem) {
+        playlistItem.classList.remove('dragging');
+    }
+    clearPlaylistDragOverStyles();
+    draggedPlaylistId = null;
+    dragTargetPlaylistElement = null;
+}
+
+function handlePlaylistDragOver(event) {
+    event.preventDefault(); // Allow drop
+    if (!draggedPlaylistId) return;
+    event.dataTransfer.dropEffect = 'move';
+
+    const targetItem = event.target.closest('.playlist-item');
+    let currentTarget = null;
+
+    if (targetItem && targetItem.draggable && parseInt(targetItem.dataset.id) !== draggedPlaylistId) {
+         currentTarget = targetItem;
+    }
+
+    if (currentTarget !== dragTargetPlaylistElement) {
+        clearPlaylistDragOverStyles(); // Clear previous target
+        if (currentTarget) {
+            currentTarget.classList.add('drag-over'); // Highlight new target
+        }
+        dragTargetPlaylistElement = currentTarget; // Track new target
+    }
+
+     if (!currentTarget) {
+         event.dataTransfer.dropEffect = 'none'; // Cannot drop here
+     }
+}
+
+function handlePlaylistDragLeave(event) {
+    // Clear styles only if leaving the list container bounds
+    if (!event.relatedTarget || !playlistListEl.contains(event.relatedTarget)) {
+        clearPlaylistDragOverStyles();
+        dragTargetPlaylistElement = null;
+    }
+}
+
+function handlePlaylistDrop(event) {
+    event.preventDefault();
+    const dropTargetId = dragTargetPlaylistElement ? parseInt(dragTargetPlaylistElement.dataset.id) : null;
+
+    clearPlaylistDragOverStyles(); // Always clear styles
+
+    if (draggedPlaylistId && dropTargetId && dropTargetId !== draggedPlaylistId) {
+        handleReorderPlaylist(draggedPlaylistId, dropTargetId);
+    }
+
+    // Resetting state happens in handlePlaylistDragEnd
+}
+
+function clearPlaylistDragOverStyles() {
+    const highlightedItem = playlistListEl.querySelector('.playlist-item.drag-over');
+    if (highlightedItem) {
+        highlightedItem.classList.remove('drag-over');
+    }
+     if (dragTargetPlaylistElement) {
+         dragTargetPlaylistElement.classList.remove('drag-over');
+     }
+}
+
+function handleReorderPlaylist(playlistIdToMove, targetPlaylistId) {
+    const playlistToMoveIndex = playlists.findIndex(p => p.id === playlistIdToMove);
+    if (playlistToMoveIndex === -1) return;
+
+    const [playlistToMove] = playlists.splice(playlistToMoveIndex, 1); // Remove the playlist
+
+    // Find the target's NEW index after the splice
+    const targetIndex = playlists.findIndex(p => p.id === targetPlaylistId);
+
+    if (targetIndex !== -1) {
+        // Insert before the target's new position
+        playlists.splice(targetIndex, 0, playlistToMove);
+    } else {
+        // Fallback: append to end if target not found (shouldn't happen in valid drop)
+        console.warn("Playlist reorder target not found after splice, appending to end.");
+        playlists.push(playlistToMove);
+    }
+
+    savePlaylists();
+    renderPlaylists(); // Re-render the list with the new order
+    showToast('Playlist order updated.', 'info', 1500); // Short confirmation
 }
 
 // --- Start the app ---

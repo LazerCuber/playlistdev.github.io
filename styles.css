@@ -445,23 +445,47 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            transition: background-color var(--transition-speed) var(--transition-timing), color var(--transition-speed) var(--transition-timing);
+            transition: background-color var(--transition-speed) var(--transition-timing), color var(--transition-speed) var(--transition-timing), border-color 0.1s ease-out;
             position: relative;
             font-size: 0.9rem;
+            border: 1px solid transparent;
         }
 
         .playlist-item:hover {
             background-color: var(--hover-bg-color);
+            border-color: var(--border-color-light);
         }
 
         .playlist-item.active {
             background-color: var(--primary-color-light);
             color: var(--primary-color-dark);
             font-weight: 600;
+            border-color: var(--primary-color-light);
         }
 
         html[data-theme="dark"] .playlist-item.active {
             color: var(--primary-color);
+            border-color: rgba(var(--primary-color-rgb), 0.3);
+        }
+
+        /* Playlist Drag & Drop Styles */
+        .playlist-item[draggable="true"] {
+            cursor: grab;
+        }
+
+        .playlist-item.dragging {
+            opacity: 0.4;
+            cursor: grabbing;
+            background: var(--surface-color-alt);
+            box-shadow: var(--shadow-md);
+            border-color: var(--border-color);
+        }
+
+        /* Playlist drag-over style (similar to video card drag-over) */
+        .playlist-item.drag-over {
+            outline: 2px dashed var(--primary-color);
+            outline-offset: -2px;
+            background-color: var(--hover-bg-color);
         }
 
         .playlist-name {
@@ -470,6 +494,7 @@
             text-overflow: ellipsis;
             margin-right: 8px;
             flex-grow: 1;
+            pointer-events: none;
         }
 
         .playlist-count {
@@ -478,6 +503,7 @@
             margin-left: 4px;
             font-weight: 400;
             flex-shrink: 0;
+            pointer-events: none;
         }
 
         .playlist-item.active .playlist-count {
