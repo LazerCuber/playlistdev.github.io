@@ -182,7 +182,6 @@
             width: var(--sidebar-default-width);
             min-width: var(--sidebar-min-width);
             max-width: var(--sidebar-max-width);
-            background-color: var(--surface-color);
             border-right: 1px solid var(--border-color-light);
             display: flex;
             flex-direction: column;
@@ -231,33 +230,43 @@
 
         .sidebar-content {
             /* Scrollable area */
-            padding: 20px;
+            padding: 15px; /* Adjusted padding */
             overflow-y: auto;
             flex-grow: 1;
+            border: 1px solid var(--border-color-light); /* Added border */
+            border-radius: var(--border-radius-lg); /* Added border-radius */
+            margin: 10px 10px 5px 10px; /* Added margin (Top, Sides, Bottom) */
+            background-color: var(--surface-color); /* Ensure background color */
+            transition: var(--transition-default); /* Added transition */
+            transition-property: background-color, border-color, padding, margin; /* Added transition properties */
         }
 
         .sidebar-footer {
-            padding: 16px 20px;
-            border-top: 1px solid var(--border-color-light);
+            padding: 15px; /* Adjusted padding */
+            /* border-top: 1px solid var(--border-color-light); */ /* Removed original border-top */
             flex-shrink: 0;
             background-color: var(--surface-color);
-            /* Ensure bg matches */
             transition: var(--transition-default);
-            transition-property: background-color, border-color;
+            transition-property: background-color, border-color, padding, margin; /* Added transition properties */
+            border: 1px solid var(--border-color-light); /* Added border */
+            border-radius: var(--border-radius-lg); /* Added border-radius */
+            margin: 5px 10px 10px 10px; /* Added margin (Top, Sides, Bottom) */
         }
 
         .sidebar-header {
-            margin-bottom: 0px;
+             /* Keep default or remove if not needed */
+             /* Add horizontal padding to align with margined content/footer */
         }
 
         .sidebar h2 {
             font-weight: 700;
-            font-size: 1.3rem;
+            font-size: 1.2rem;
             color: var(--text-color);
             display: flex;
             align-items: center;
             gap: 8px;
             margin-bottom: 16px;
+            margin-top: -4px;
             transition: color var(--transition-speed) var(--transition-timing);
         }
 
@@ -1127,10 +1136,11 @@
 
             .sidebar-content {
                 /* Adjust padding slightly */
-                padding: 16px;
+                padding: 12px; /* Adjusted mobile padding */
                 /* Limit height to prevent excessive scrolling */
                 overflow-y: auto;
                 /* Ensure it's scrollable if content overflows */
+                margin: 10px 10px 20px 10px; /* Keep margin */
             }
 
             /* Add this rule to hide the main sidebar title on mobile */
@@ -1138,9 +1148,18 @@
                 display: none;
             }
 
+            /* Adjust header padding on mobile */
+             .sidebar-header {
+                 padding: 0 10px; /* Keep horizontal padding */
+             }
+
             .sidebar-footer {
-                padding: 12px 16px;
-                /* Adjust padding */
+                padding: 12px 16px; /* Restore original mobile padding */
+                margin: 0; /* Remove margin added previously */
+                border: none; /* Remove border added previously */
+                border-top: 1px solid var(--border-color-light); /* Restore original border-top */
+                border-radius: 0; /* Remove border-radius */
+                /* Transition property will inherit from the base rule */
             }
 
             .main-content {
