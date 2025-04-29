@@ -558,9 +558,12 @@
         /* --- Main Content --- */
         .main-content {
             flex: 1;
-            padding: 24px 32px;
+            padding: 10px 25px;
             overflow-y: auto;
             transition: background-color var(--transition-speed) var(--transition-timing);
+            border: 1px solid var(--border-color-light);
+            border-radius: var(--border-radius-lg);
+            margin: 10px 10px 10px 10px;
         }
 
         .main-header {
@@ -669,13 +672,13 @@
             padding: 10px 20px;
             border-radius: var(--border-radius-lg);
             box-shadow: var(--shadow-sm);
-            margin-bottom: 24px;
+            margin-bottom: 20px;
             border: 1px solid var(--border-color-light);
             transition: var(--transition-default);
             transition-property: background-color, border-color, box-shadow;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
         }
 
         .video-form label {
@@ -1219,6 +1222,11 @@
                 /* Take full width */
                 justify-content: space-between;
                 /* Space out elements */
+            }
+
+            /* Hide the audio only control group on mobile */
+            #audioOnlyControlGroup {
+                display: none;
             }
 
             .video-form {
