@@ -20,7 +20,7 @@
             /* Sidebar */
             --sidebar-min-width: 255px;
             --sidebar-max-width: 500px;
-            --sidebar-default-width: 300px;
+            --sidebar-default-width: 255px;
             --sidebar-resize-handle-width: 5px;
 
             /* Shadows (More Subtle) */
