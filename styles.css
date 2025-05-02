@@ -703,8 +703,7 @@
             border-radius: var(--border-radius-lg);
             overflow: hidden;
             box-shadow: var(--shadow-md);
-            position: sticky;
-            top: 20px;
+            position: relative;
             z-index: var(--z-sticky);
             border: 1px solid var(--border-color-light);
             transition: var(--transition-default);
@@ -764,15 +763,44 @@
 
         /* Keep the wrapper visible but maybe add an indicator? */
         body.audio-only-active .player-wrapper {
-            min-height: 30px;
+            min-height: auto; /* Let content determine height */
+            padding: 5px 40px 5px 15px; /* Top/Bottom padding, space for close btn, left padding */
             background-color: var(--surface-color-alt);
             box-shadow: var(--shadow-sm);
+            display: block; /* Ensure it's block */
+            position: sticky; /* Keep it sticky */
         }
+
+        /* New styles for audio-only info */
+        .audio-only-info {
+            display: flex; /* Use flex for better alignment */
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85rem;
+            color: var(--text-color-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .audio-only-info .audio-title {
+            font-weight: 600;
+            color: var(--text-color);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        body.audio-only-active .audio-only-info {
+            display: flex; /* Change from none/hidden to flex */
+        }
+        /* End new styles */
 
         /* Ensure close button is still visible and positioned correctly */
         body.audio-only-active .close-player-btn {
             top: 50%;
             transform: translateY(-50%);
+            right: 8px; /* Adjust position */
             background-color: transparent;
             color: var(--icon-color);
         }
@@ -1252,12 +1280,12 @@
             }
 
             .player-wrapper {
-                position: relative;
-                /* Change from sticky */
-                top: 0;
+                position: sticky;
+                top: 10px;
                 margin-top: 16px;
                 margin-bottom: 16px;
                 /* Keep other styles like border-radius, overflow */
+                z-index: var(--z-sticky);
             }
 
             .video-grid {
@@ -1346,6 +1374,13 @@
 
             /* --- End Mobile Tap Feedback --- */
 
+            /* Hide the new audio-only info text on mobile as well if desired */
+            .audio-only-info {
+                /* display: none; */ /* Uncomment if you want to hide it on mobile */
+            }
+            body.audio-only-active .player-wrapper {
+                padding: 5px 40px 5px 10px; /* Adjust mobile padding */
+            }
         }
 
         /* Further adjustments for very small screens */

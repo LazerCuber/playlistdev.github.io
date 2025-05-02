@@ -31,6 +31,8 @@ const paginationControlsEl = document.getElementById('paginationControls');
 const prevPageBtn = document.getElementById('prevPageBtn');
 const nextPageBtn = document.getElementById('nextPageBtn');
 const pageInfoEl = document.getElementById('pageInfo');
+const audioOnlyInfoEl = document.getElementById('audioOnlyInfo');
+const audioOnlyTitleEl = audioOnlyInfoEl.querySelector('.audio-title'); // Target the specific span
 
 // --- State ---
 let playlists = [];
@@ -450,7 +452,12 @@ function onPlayerStateChange(event) {
             const video = currentPlaylist.videos.find(v => v.id === currentlyPlayingVideoId);
             if (video) {
                 updateMediaSessionMetadata(video);
+                updateAudioOnlyDisplay(video.title); // <-- Update audio display
+            } else {
+                 updateAudioOnlyDisplay(null); // Clear if video not found
             }
+        } else {
+             updateAudioOnlyDisplay(null); // Clear if no playlist or video ID
         }
         if ('mediaSession' in navigator) {
             navigator.mediaSession.playbackState = "playing";
@@ -460,6 +467,7 @@ function onPlayerStateChange(event) {
         if ('mediaSession' in navigator) {
             navigator.mediaSession.playbackState = "paused";
         }
+         // Keep audio title visible when paused
     }
     if (event.data === YT.PlayerState.ENDED) {
         if ('mediaSession' in navigator) {
@@ -471,6 +479,7 @@ function onPlayerStateChange(event) {
         } else {
             // If autoplay is off, maybe just highlight the next video? Or do nothing.
             updatePlayingVideoHighlight(null); // Clear highlight as playback stopped
+            updateAudioOnlyDisplay(null); // <-- Clear audio display
         }
     }
 }
@@ -835,7 +844,7 @@ function handleDeleteVideo(videoId) {
     if (currentPage > totalPages && totalPages > 0) {
         currentPage = totalPages;
     } else if (currentPlaylist.videos.length === 0) {
-        currentPage = 1; // Reset if playlist becomes empty
+        currentPage = 1; // Reset if playlist became empty
     }
 
     savePlaylists();
@@ -876,35 +885,36 @@ function playVideo(videoId) {
         return;
     }
 
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    let videoData = null;
+    if (currentPlaylist) {
+        videoData = currentPlaylist.videos.find(v => v.id === videoId);
+    }
+
     // 1. Ensure API is ready
     if (!isYTApiReady) {
         console.log("YT API not ready yet. Queuing video:", videoId);
         videoIdToPlayOnReady = videoId; // Queue the video
         showToast("Player is loading...", "info", 1500); // Inform user
-        // Preemptively show player wrapper with a loading indicator maybe?
-        playerWrapperEl.classList.remove('hidden'); // Show wrapper immediately
-        // Optional: Add a loading indicator inside playerWrapperEl or videoGridEl
+        // Preemptively show player wrapper
+        playerWrapperEl.classList.remove('hidden');
+        if (isAudioOnlyMode && videoData) {
+             updateAudioOnlyDisplay(videoData.title); // Show title early if possible
+        } else {
+             updateAudioOnlyDisplay(null); // Hide if not audio-only or no data yet
+        }
         return;
     }
 
     // 2. Show player UI
-    if (!isAudioOnlyMode) {
-        playerWrapperEl.classList.remove('hidden');
-    } else {
-        playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible for audio-only overlay
-    }
+    playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible always when playing
     currentlyPlayingVideoId = videoId; // Track immediately
     updatePlayingVideoHighlight(videoId);
-    applyAudioOnlyClass();
+    applyAudioOnlyClass(); // Applies .audio-only-active to body if needed
+    updateAudioOnlyDisplay(videoData ? videoData.title : null); // Update display based on mode and data
 
     // --- Media Session Update (do this early) ---
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (currentPlaylist) {
-        const videoData = currentPlaylist.videos.find(v => v.id === videoId);
-        updateMediaSessionMetadata(videoData || null); // Update or clear
-    } else {
-        updateMediaSessionMetadata(null); // Clear if no playlist
-    }
+    updateMediaSessionMetadata(videoData || null); // Update or clear
     // --- End Media Session Update ---
 
     // 3. Handle Player Instance
@@ -914,10 +924,8 @@ function playVideo(videoId) {
             console.log("Player exists and is ready. Loading video:", videoId);
             try {
                 ytPlayer.loadVideoById(videoId); // Let onPlayerStateChange handle play confirmation
-                // No need to call ytPlayer.playVideo() here, autoplay=1 and onReady should handle it.
-                // Scroll into view if needed
+                // Scroll into view if needed (only if NOT in audio-only mode)
                  if (!isAudioOnlyMode) {
-                    // Use timeout to allow rendering/state updates
                     setTimeout(() => {
                         if (playerWrapperEl.offsetParent !== null) {
                              playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -930,19 +938,18 @@ function playVideo(videoId) {
                 handleClosePlayer();
             }
         } else {
-            // Player exists but is not ready (should be rare with new flow, but handle anyway)
+            // Player exists but is not ready
             console.log("Player exists but not ready. Queuing video:", videoId);
             videoIdToPlayOnReady = videoId; // Queue (onPlayerReady will handle)
-            // Destroying and recreating might be safer here?
-            // handleClosePlayer(); // Destroy current non-ready player
-            // ytPlayer = createPlayer(videoId); // Create new one immediately
+             // updateAudioOnlyDisplay is already handled above based on videoData
         }
     } else {
         // Player does not exist, create it
         console.log("Player does not exist. Creating player for video:", videoId);
         isPlayerReady = false; // Explicitly set to false until onReady fires
         ytPlayer = createPlayer(videoId); // Create and load video
-        // onPlayerReady will handle the rest (highlight, play, scroll)
+        // onPlayerReady will handle the rest
+        // updateAudioOnlyDisplay is already handled above based on videoData
     }
 }
 
@@ -957,6 +964,7 @@ function stopVideo() {
     }
     currentlyPlayingVideoId = null;
     updatePlayingVideoHighlight(null);
+    updateAudioOnlyDisplay(null); // <-- Clear audio display
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'none';
         // updateMediaSessionMetadata(null); // Don't clear metadata, closePlayer does
@@ -1104,12 +1112,19 @@ function handleAudioOnlyToggle() {
     applyAudioOnlyClass(); // Apply/remove the class immediately
     showToast(`Audio-Only Mode ${isAudioOnlyMode ? 'enabled' : 'disabled'}.`, 'info');
 
-    // If a video is currently playing, adjust visibility/scrolling
+    // If a video is currently playing, adjust visibility/scrolling and update display
     if (currentlyPlayingVideoId) {
+        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+        const videoData = currentPlaylist?.videos.find(v => v.id === currentlyPlayingVideoId);
+        const videoTitle = videoData ? videoData.title : null;
+
         if (isAudioOnlyMode) {
-            // No need to scroll, CSS handles hiding the video
-             playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible
+            // Update and show the info display
+            updateAudioOnlyDisplay(videoTitle);
+            playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible
         } else {
+            // Hide the info display
+            updateAudioOnlyDisplay(null);
             // Show video and scroll into view if it was hidden
             playerWrapperEl.classList.remove('hidden');
             setTimeout(() => {
@@ -1119,8 +1134,9 @@ function handleAudioOnlyToggle() {
             }, 100);
         }
     } else {
-         // If no video playing, ensure player wrapper is hidden if audio-only is disabled
-         // and no video is selected to play next
+        // If no video playing, ensure player wrapper is hidden if audio-only is disabled
+        // and no video is selected to play next. Also clear audio display.
+        updateAudioOnlyDisplay(null);
          if (!isAudioOnlyMode && !videoIdToPlayOnReady) {
             playerWrapperEl.classList.add('hidden');
          }
@@ -1278,7 +1294,7 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 function handleClosePlayer() {
-    stopVideo(); // Stop playback first
+    stopVideo(); // Stop playback first (this now calls updateAudioOnlyDisplay(null))
 
     // Destroy the player instance if it exists
     if (ytPlayer && typeof ytPlayer.destroy === 'function') {
@@ -1297,10 +1313,11 @@ function handleClosePlayer() {
     }
 
     videoIdToPlayOnReady = null; // Clear any queued video
-    currentlyPlayingVideoId = null; // Ensure playing ID is cleared
+    // currentlyPlayingVideoId = null; // Already done in stopVideo
     playerWrapperEl.classList.add('hidden');
-    bodyEl.classList.remove('audio-only-active');
+    // bodyEl.classList.remove('audio-only-active'); // Don't remove this, keep the toggle state
     updatePlayingVideoHighlight(null); // Ensure highlight is removed
+    updateAudioOnlyDisplay(null); // Explicitly ensure display is hidden
 
     if ('mediaSession' in navigator) {
         updateMediaSessionMetadata(null); // Clear metadata on close
@@ -1538,3 +1555,16 @@ function handleReorderPlaylist(playlistIdToMove, targetPlaylistId) {
 
 // --- Start the app ---
 init();
+
+// Function to update the audio-only info display
+function updateAudioOnlyDisplay(videoTitle) {
+    if (isAudioOnlyMode && videoTitle) {
+        audioOnlyTitleEl.textContent = videoTitle;
+        escapeElement.textContent = videoTitle; // Use escape element for safety
+        audioOnlyTitleEl.innerHTML = escapeElement.innerHTML; // Set escaped HTML
+        audioOnlyInfoEl.classList.remove('hidden');
+    } else {
+        audioOnlyTitleEl.textContent = '';
+        audioOnlyInfoEl.classList.add('hidden');
+    }
+}
