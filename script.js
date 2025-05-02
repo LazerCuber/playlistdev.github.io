@@ -53,6 +53,7 @@ let touchDraggedElement = null;
 // Pagination State
 const videosPerPage = 20; // Number of videos to show per page
 let currentPage = 1;
+let isYTApiReady = false; // New state variable to track API readiness
 
 // --- Icons (Replace with actual SVG content or library calls) ---
 const ICONS = {
@@ -73,12 +74,12 @@ function init() {
     loadTheme();
     loadPlaylists();
     loadAutoplaySetting();
-    loadAudioOnlySetting(); // Added
+    loadAudioOnlySetting();
     loadSidebarWidth();
     renderPlaylists();
 
-    // YouTube API script is loaded externally via <script> tag.
-    // onYouTubeIframeAPIReady will be called automatically by the API when ready.
+    // NOTE: Player is no longer created here, only when needed.
+    // onYouTubeIframeAPIReady will just set isYTApiReady = true;
 
     const lastSelectedId = localStorage.getItem('lastSelectedPlaylistId');
     if (lastSelectedId && playlists.some(p => p.id === parseInt(lastSelectedId))) {
@@ -90,7 +91,7 @@ function init() {
     }
 
     setupEventListeners();
-    updateThemeIcon(); // Set initial theme icon
+    updateThemeIcon();
 }
 
 // --- Sidebar Resizing Functions ---
@@ -367,61 +368,90 @@ function updateThemeIcon() {
 // function setFont(fontName) { ... }
 
 // --- YouTube Player API ---
+
 // This function MUST be global for the API to find it
 function onYouTubeIframeAPIReady() {
-    console.log("YT API Ready. Initializing Player.");
-    // Only create player if the element exists
-    if (document.getElementById('player')) {
-        ytPlayer = new YT.Player('player', {
-            height: '100%', 
-            width: '100%',
-            playerVars: { 
-                'playsinline': 1,  // Already set for inline playback
-                'rel': 0,          // Disable related videos
-                'enablejsapi': 1,  // Ensure JavaScript API is enabled
-                'autoplay': 1      // Autoplay (may help with background playback)
-            },
-            events: {
-                'onReady': onPlayerReady,
-                'onStateChange': onPlayerStateChange,
-                'onError': onPlayerError
-            }
-        });
-    } else {
-        // This might happen if the player structure isn't in the DOM initially
-        console.warn("Player element ('#player') not found when API was ready.");
+    console.log("YT API Ready. Player will be initialized on first play.");
+    isYTApiReady = true; // Mark API as ready
+
+    // If a video was queued *before* the API was ready,
+    // the playVideo call will now handle initialization.
+    if (videoIdToPlayOnReady) {
+        playVideo(videoIdToPlayOnReady);
     }
 }
 
-// No longer needed - initialization happens via onYouTubeIframeAPIReady
-// function ensurePlayerInitialized() { ... }
+function createPlayer(videoId) {
+    console.log("Creating new YT Player instance.");
+    return new YT.Player('player', {
+        height: '100%',
+        width: '100%',
+        videoId: videoId, // Load the video immediately on creation
+        playerVars: {
+            'playsinline': 1,
+            'rel': 0,
+            'enablejsapi': 1,
+            'autoplay': 1 // Autoplay should work better now as creation is tied to user action
+        },
+        events: {
+            'onReady': onPlayerReady,
+            'onStateChange': onPlayerStateChange,
+            'onError': onPlayerError
+        }
+    });
+}
 
 function onPlayerReady(event) {
     console.log("Player Ready");
     isPlayerReady = true;
-    // If a video was requested before the player was ready, play it now
-    if (videoIdToPlayOnReady) {
-        console.log("Playing queued video on ready:", videoIdToPlayOnReady);
-        // Call playVideo again - it will now proceed as player is ready
-        playVideo(videoIdToPlayOnReady);
-        videoIdToPlayOnReady = null; // Clear the queue
+    // Autoplay is handled by playerVars now, but we ensure playVideo is called
+    // This might be redundant if autoplay=1 works reliably, but safe to keep.
+    // Important: We get the videoId from the player instance itself now,
+    // as videoIdToPlayOnReady might have been cleared or is irrelevant
+    // if the player was created for a different video later.
+    const videoData = event.target.getVideoData();
+    const readyVideoId = videoData ? videoData.video_id : null;
+
+    if (readyVideoId) {
+         console.log("Player ready for video:", readyVideoId);
+         // Ensure highlight and media session are correct for the video that just loaded
+         currentlyPlayingVideoId = readyVideoId;
+         updatePlayingVideoHighlight(readyVideoId);
+         const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+         if (currentPlaylist) {
+             const video = currentPlaylist.videos.find(v => v.id === readyVideoId);
+             if (video) {
+                 updateMediaSessionMetadata(video);
+             }
+         }
+         // Explicitly call play, though autoplay=1 might already do it.
+         // This reinforces the intent, especially after manual creation.
+         event.target.playVideo();
+    } else {
+         console.warn("Player ready but couldn't get video ID.");
     }
+
+    // Clear any potentially stale queued ID
+    videoIdToPlayOnReady = null;
 }
 
 function onPlayerStateChange(event) {
+    // Add null check for ytPlayer
+    if (!ytPlayer) return;
+
     if (event.data === YT.PlayerState.PLAYING) {
-        currentlyPlayingVideoId = getCurrentPlayingVideoIdFromApi();
+        // Use event.target which refers to the player instance
+        const videoData = event.target.getVideoData();
+        currentlyPlayingVideoId = videoData ? videoData.video_id : null;
         updatePlayingVideoHighlight(currentlyPlayingVideoId);
 
-        // Update Media Session metadata when playback starts
         const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-        if (currentPlaylist) {
-            const videoData = currentPlaylist.videos.find(v => v.id === currentlyPlayingVideoId);
-            if (videoData) {
-                updateMediaSessionMetadata(videoData);
+        if (currentPlaylist && currentlyPlayingVideoId) {
+            const video = currentPlaylist.videos.find(v => v.id === currentlyPlayingVideoId);
+            if (video) {
+                updateMediaSessionMetadata(video);
             }
         }
-
         if ('mediaSession' in navigator) {
             navigator.mediaSession.playbackState = "playing";
         }
@@ -435,89 +465,91 @@ function onPlayerStateChange(event) {
         if ('mediaSession' in navigator) {
             navigator.mediaSession.playbackState = "none";
         }
-        playNextVideo();
+        // Check autoplay setting before playing next
+        if (isAutoplayEnabled) {
+             playNextVideo();
+        } else {
+            // If autoplay is off, maybe just highlight the next video? Or do nothing.
+            updatePlayingVideoHighlight(null); // Clear highlight as playback stopped
+        }
     }
 }
 
-// Added a dedicated error handler
 function onPlayerError(event) {
+    // Add null check for ytPlayer
+    if (!ytPlayer) return;
+
     console.error('YouTube Player Error:', event.data);
     let errorMsg = 'An unknown player error occurred.';
-    const videoId = getCurrentPlayingVideoIdFromApi(); // Get ID if possible
+    // Use event.target to get video data if possible
+    const videoData = event.target.getVideoData ? event.target.getVideoData() : null;
+    const videoId = videoData ? videoData.video_id : currentlyPlayingVideoId; // Fallback to tracked ID
     const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : 'Unknown video';
 
-    console.error(`Error occurred for video: ${videoUrl}`); // Log the URL
-    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none'; // Update state on error
+    console.error(`Error occurred for video: ${videoUrl}`);
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
 
-    let shouldSkip = false; // Flag to determine if we should try skipping
+    let shouldSkip = false;
 
     switch (event.data) {
-        case 2: // Invalid parameter
-            errorMsg = 'Invalid video ID or player parameter.';
-            shouldSkip = true; // Attempt to skip on this error too
-            break;
-        case 5: // HTML5 player error
-            errorMsg = 'Error in the HTML5 player.';
-            shouldSkip = true; // Attempt to skip on this error too
-            break;
-        case 100: // Video not found
-            errorMsg = 'Video not found (removed or private).';
-            shouldSkip = true;
-            break;
-        case 101: // Playback not allowed
-        case 150: // Playback not allowed
-            errorMsg = 'Playback disallowed by video owner. Try watching directly on YouTube.';
-            shouldSkip = true;
-            break;
-        default:
-            errorMsg = `Player error code: ${event.data}`;
-            shouldSkip = true; // Attempt to skip on unknown errors as well
+        case 2: errorMsg = 'Invalid video ID or player parameter.'; shouldSkip = true; break;
+        case 5: errorMsg = 'Error in the HTML5 player.'; shouldSkip = true; break;
+        case 100: errorMsg = 'Video not found (removed or private).'; shouldSkip = true; break;
+        case 101: case 150: errorMsg = 'Playback disallowed by video owner.'; shouldSkip = true; break;
+        default: errorMsg = `Player error code: ${event.data}`; shouldSkip = true; break;
     }
 
-    // Show toast regardless of whether we skip or not (unless handled specially below)
     showToast(`Player Error: ${errorMsg}`, 'error');
 
-    // Attempt to skip to the next video if autoplay is enabled and skipping is flagged
+    // Attempt to skip ONLY if autoplay is enabled
     if (isAutoplayEnabled && shouldSkip) {
-        showToast(`${errorMsg} Skipping to next video.`, 'info', 4000); // Show a follow-up toast
-        // Use a small delay to allow the error toast to show first,
-        // and prevent potential race conditions if errors happen rapidly.
+        showToast(`${errorMsg} Skipping to next video.`, 'info', 4000);
         setTimeout(playNextVideo, 500);
     } else {
-        // Optional: If not autoplaying or not skipping, maybe hide player?
-        // stopVideo();
-        // playerWrapperEl.classList.add('hidden');
+        // If autoplay is off, or we shouldn't skip, stop and hide the player
+        handleClosePlayer();
     }
 }
 
 function getCurrentPlayingVideoIdFromApi() {
-    if (ytPlayer && typeof ytPlayer.getVideoData === 'function') {
-        const videoData = ytPlayer.getVideoData();
-        return videoData ? videoData.video_id : null;
+    // Add null check for ytPlayer
+    if (ytPlayer && isPlayerReady && typeof ytPlayer.getVideoData === 'function') {
+        try {
+            const videoData = ytPlayer.getVideoData();
+            return videoData ? videoData.video_id : null;
+        } catch (e) {
+            console.error("Error getting video data from player:", e);
+            return null; // Return null if API call fails
+        }
     }
     return null;
 }
 
 function playNextVideo() {
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (!currentPlaylist || currentPlaylist.videos.length < 1) return; // Check if playlist is empty
+    // Add null check for ytPlayer
+    if (!ytPlayer || !currentPlaylistId) return;
 
-    // If there's no currently playing video ID tracked, or only one video, don't proceed
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    if (!currentPlaylist || currentPlaylist.videos.length < 1) return;
+
     if (!currentlyPlayingVideoId && currentPlaylist.videos.length > 0) {
-        // Maybe play the first video if nothing was playing? Or just return?
-        // For now, let's assume playNext is only called after a video ends/errors.
         console.log("playNextVideo called but no video was playing. Starting from first video.");
-        playVideo(currentPlaylist.videos[0].id); // Try playing the first video as a fallback
+        playVideo(currentPlaylist.videos[0].id);
         return;
     }
-    if (!currentlyPlayingVideoId || currentPlaylist.videos.length < 2) return; // Need at least 2 videos to advance
+    if (!currentlyPlayingVideoId || currentPlaylist.videos.length < 2) {
+        // If only one video, or no current video, stop? Or replay? For now, stop.
+        handleClosePlayer(); // Close player if we can't advance
+        return;
+    }
 
     const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
     if (currentIndex === -1) {
-        // If the currently tracked video isn't found (e.g., deleted?), play the first one
         console.warn("Currently playing video not found in playlist during playNext. Playing first video.");
         if (currentPlaylist.videos.length > 0) {
             playVideo(currentPlaylist.videos[0].id);
+        } else {
+             handleClosePlayer(); // Close if playlist became empty
         }
         return;
     }
@@ -529,9 +561,7 @@ function playNextVideo() {
         playVideo(nextVideo.id);
     } else {
         console.error(`Could not find next video at index ${nextIndex}`);
-        // Maybe stop playback or try the first video again?
-        stopVideo();
-        playerWrapperEl.classList.add('hidden');
+        handleClosePlayer(); // Close if next video isn't found
     }
 }
 
@@ -841,81 +871,96 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
 }
 
 function playVideo(videoId) {
-    // Ensure the player container is visible first
-    // UNLESS we are in audio-only mode
+    if (!videoId) {
+        console.error("playVideo called with no videoId");
+        return;
+    }
+
+    // 1. Ensure API is ready
+    if (!isYTApiReady) {
+        console.log("YT API not ready yet. Queuing video:", videoId);
+        videoIdToPlayOnReady = videoId; // Queue the video
+        showToast("Player is loading...", "info", 1500); // Inform user
+        // Preemptively show player wrapper with a loading indicator maybe?
+        playerWrapperEl.classList.remove('hidden'); // Show wrapper immediately
+        // Optional: Add a loading indicator inside playerWrapperEl or videoGridEl
+        return;
+    }
+
+    // 2. Show player UI
     if (!isAudioOnlyMode) {
         playerWrapperEl.classList.remove('hidden');
     } else {
-        // If audio-only is active, ensure the wrapper *is* shown
-        // (because the CSS will hide the inner container)
-        // but don't scroll to it.
-         playerWrapperEl.classList.remove('hidden');
+        playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible for audio-only overlay
     }
+    currentlyPlayingVideoId = videoId; // Track immediately
+    updatePlayingVideoHighlight(videoId);
+    applyAudioOnlyClass();
 
-    currentlyPlayingVideoId = videoId; // Set this immediately for state tracking
-    updatePlayingVideoHighlight(videoId); // Highlight the selected video immediately
-    applyAudioOnlyClass(); // Ensure correct class is applied
-
-    // Check if player is initialized AND ready
-    if (ytPlayer && isPlayerReady) {
-        console.log("Player exists and is ready. Loading and playing video:", videoId);
-        try {
-            // Use loadVideoById to load the video
-            ytPlayer.loadVideoById(videoId);
-            // Explicitly call playVideo() right after loading.
-            // This might reinforce the user-initiated playback signal on some browsers.
-            ytPlayer.playVideo();
-
-            // Scroll player into view smoothly, but only if not in audio-only mode
-            if (!isAudioOnlyMode) {
-                setTimeout(() => {
-                    if (playerWrapperEl.offsetParent !== null) { // Check if element is visible before scrolling
-                        playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                    }
-                }, 100);
-            }
-        } catch (error) {
-            console.error("Error calling loadVideoById or playVideo:", error);
-            showToast("Failed to load or play video in player.", "error");
-            handleClosePlayer(); // Reset state if loading fails
-            videoIdToPlayOnReady = null; // Clear any queue if loading failed
-        }
-    } else {
-        // Player not ready or not initialized yet, queue the video ID
-        console.log(`Player not ready (Player: ${!!ytPlayer}, Ready: ${isPlayerReady}). Queuing video:`, videoId);
-        videoIdToPlayOnReady = videoId;
-        // The onPlayerReady handler will call playVideo(videoIdToPlayOnReady) again,
-        // and the playVideo logic above will then execute, including the playVideo() call.
-    }
-
-    // --- Media Session Update ---
-    // Metadata is already set here. Playback state will be updated in onPlayerStateChange.
+    // --- Media Session Update (do this early) ---
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     if (currentPlaylist) {
         const videoData = currentPlaylist.videos.find(v => v.id === videoId);
-        if (videoData) {
-            updateMediaSessionMetadata(videoData);
-        } else {
-             updateMediaSessionMetadata(null); // Clear if video data not found
-        }
+        updateMediaSessionMetadata(videoData || null); // Update or clear
     } else {
-        updateMediaSessionMetadata(null); // Clear if playlist not found
+        updateMediaSessionMetadata(null); // Clear if no playlist
     }
     // --- End Media Session Update ---
+
+    // 3. Handle Player Instance
+    if (ytPlayer) {
+        // Player exists, check readiness
+        if (isPlayerReady) {
+            console.log("Player exists and is ready. Loading video:", videoId);
+            try {
+                ytPlayer.loadVideoById(videoId); // Let onPlayerStateChange handle play confirmation
+                // No need to call ytPlayer.playVideo() here, autoplay=1 and onReady should handle it.
+                // Scroll into view if needed
+                 if (!isAudioOnlyMode) {
+                    // Use timeout to allow rendering/state updates
+                    setTimeout(() => {
+                        if (playerWrapperEl.offsetParent !== null) {
+                             playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }
+                    }, 100);
+                 }
+            } catch (error) {
+                console.error("Error calling loadVideoById:", error);
+                showToast("Failed to load video.", "error");
+                handleClosePlayer();
+            }
+        } else {
+            // Player exists but is not ready (should be rare with new flow, but handle anyway)
+            console.log("Player exists but not ready. Queuing video:", videoId);
+            videoIdToPlayOnReady = videoId; // Queue (onPlayerReady will handle)
+            // Destroying and recreating might be safer here?
+            // handleClosePlayer(); // Destroy current non-ready player
+            // ytPlayer = createPlayer(videoId); // Create new one immediately
+        }
+    } else {
+        // Player does not exist, create it
+        console.log("Player does not exist. Creating player for video:", videoId);
+        isPlayerReady = false; // Explicitly set to false until onReady fires
+        ytPlayer = createPlayer(videoId); // Create and load video
+        // onPlayerReady will handle the rest (highlight, play, scroll)
+    }
 }
 
 function stopVideo() {
+    // Add null check for ytPlayer
     if (ytPlayer && typeof ytPlayer.stopVideo === 'function') {
-        ytPlayer.stopVideo();
+        try {
+            ytPlayer.stopVideo();
+        } catch (e) {
+            console.warn("Error calling stopVideo (player might already be destroyed):", e);
+        }
     }
     currentlyPlayingVideoId = null;
-    updatePlayingVideoHighlight(null); // Remove highlight when stopped
-    if ('mediaSession' in navigator) { // Clear media session on stop
+    updatePlayingVideoHighlight(null);
+    if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'none';
-        // Don't clear metadata here, handleClosePlayer might do it
-        // updateMediaSessionMetadata(null);
+        // updateMediaSessionMetadata(null); // Don't clear metadata, closePlayer does
     }
-    // Don't hide player wrapper here, handleClosePlayer does that
 }
 
 function extractVideoId(url) {
@@ -1188,11 +1233,15 @@ function handleVisualSwitchClick(event) {
 }
 
 // --- Utility ---
+
+// Create a reusable element for HTML escaping
+const escapeElement = document.createElement('div');
+
 function escapeHTML(str) {
     if (typeof str !== 'string') return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    // Use the pre-created element
+    escapeElement.textContent = str;
+    return escapeElement.innerHTML;
 }
 
 let toastTimeout = null;
@@ -1229,11 +1278,32 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 function handleClosePlayer() {
-    stopVideo(); // stopVideo now handles removing the highlight
+    stopVideo(); // Stop playback first
+
+    // Destroy the player instance if it exists
+    if (ytPlayer && typeof ytPlayer.destroy === 'function') {
+        try {
+            console.log("Destroying YT Player instance.");
+            ytPlayer.destroy();
+        } catch (e) {
+            console.error("Error destroying player:", e);
+        } finally {
+             ytPlayer = null; // Set reference to null
+             isPlayerReady = false; // Reset ready state
+        }
+    } else {
+        ytPlayer = null; // Ensure it's null even if destroy wasn't called/needed
+        isPlayerReady = false;
+    }
+
+    videoIdToPlayOnReady = null; // Clear any queued video
+    currentlyPlayingVideoId = null; // Ensure playing ID is cleared
     playerWrapperEl.classList.add('hidden');
-    bodyEl.classList.remove('audio-only-active'); // Ensure class is removed on close
-    if ('mediaSession' in navigator) { // Clear media session on explicit close
-        updateMediaSessionMetadata(null);
+    bodyEl.classList.remove('audio-only-active');
+    updatePlayingVideoHighlight(null); // Ensure highlight is removed
+
+    if ('mediaSession' in navigator) {
+        updateMediaSessionMetadata(null); // Clear metadata on close
     }
 }
 
@@ -1310,157 +1380,52 @@ function updateMediaSessionMetadata(video) {
 function setupMediaSessionActionHandlers() {
      if (!('mediaSession' in navigator)) return;
 
-    // Clear previous handlers to avoid duplicates if called multiple times
     navigator.mediaSession.setActionHandler('play', null);
     navigator.mediaSession.setActionHandler('pause', null);
     navigator.mediaSession.setActionHandler('stop', null);
     navigator.mediaSession.setActionHandler('previoustrack', null);
     navigator.mediaSession.setActionHandler('nexttrack', null);
 
-    // console.log("Setting up Media Session Action Handlers");
-
     navigator.mediaSession.setActionHandler('play', () => {
-        // console.log("Media Session: Play");
-        if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+        // Add null check for ytPlayer
+        if (ytPlayer && isPlayerReady && typeof ytPlayer.playVideo === 'function') {
             ytPlayer.playVideo();
-             navigator.mediaSession.playbackState = "playing";
+            // navigator.mediaSession.playbackState = "playing"; // State changes handled in onPlayerStateChange
+        } else if (currentlyPlayingVideoId) {
+            // If player doesn't exist but we know what *should* be playing, try to play it
+            playVideo(currentlyPlayingVideoId);
         }
     });
 
     navigator.mediaSession.setActionHandler('pause', () => {
-        // console.log("Media Session: Pause");
-        if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+        // Add null check for ytPlayer
+        if (ytPlayer && isPlayerReady && typeof ytPlayer.pauseVideo === 'function') {
             ytPlayer.pauseVideo();
-             navigator.mediaSession.playbackState = "paused";
+             // navigator.mediaSession.playbackState = "paused"; // State changes handled in onPlayerStateChange
         }
     });
 
     navigator.mediaSession.setActionHandler('stop', () => {
-        // console.log("Media Session: Stop");
-        handleClosePlayer(); // Use the existing close/stop function
+        handleClosePlayer();
     });
 
     navigator.mediaSession.setActionHandler('previoustrack', () => {
-        // console.log("Media Session: Previous Track");
         playPreviousVideo();
     });
 
     navigator.mediaSession.setActionHandler('nexttrack', () => {
-        // console.log("Media Session: Next Track");
-        playNextVideo();
+         // Ensure next track respects autoplay setting if triggered externally
+         if(isAutoplayEnabled) {
+            playNextVideo();
+         } else {
+             console.log("Media Session: Next track ignored (Autoplay off).");
+             // Optionally provide feedback?
+             showToast("Autoplay is disabled.", "info", 1500);
+         }
     });
 }
 
-function playPreviousVideo() {
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (!currentPlaylist || currentPlaylist.videos.length < 1 || !currentlyPlayingVideoId) return;
-
-    const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
-    if (currentIndex === -1) return; // Current video not found
-
-    // Calculate previous index, wrapping around to the end
-    const prevIndex = (currentIndex - 1 + currentPlaylist.videos.length) % currentPlaylist.videos.length;
-    const prevVideo = currentPlaylist.videos[prevIndex];
-
-    if (prevVideo) {
-        playVideo(prevVideo.id);
-    }
-}
-
-// --- Touch Drag and Drop Handlers ---
-
-function handleTouchStart(event) {
-    const targetCard = event.target.closest('.video-card[draggable="true"]');
-    const dragHandle = event.target.closest('.drag-handle');
-
-    // Only start drag if touching the drag handle
-    if (targetCard && dragHandle) {
-        isTouchDragging = true;
-        draggedVideoId = targetCard.dataset.videoId;
-        touchDraggedElement = targetCard;
-        touchDragStartY = event.touches[0].clientY; // Store initial Y pos
-
-        // event.preventDefault(); // Prevent scrolling while initiating drag (can be disruptive)
-
-        // Add dragging style immediately (no delay needed like mouse drag)
-        touchDraggedElement.classList.add('dragging');
-
-        // Optional: Provide haptic feedback if supported
-        if (navigator.vibrate) {
-            navigator.vibrate(50); // Vibrate for 50ms
-        }
-    } else {
-        isTouchDragging = false; // Ensure state is reset if not dragging
-        draggedVideoId = null;
-        touchDraggedElement = null;
-    }
-}
-
-function handleTouchMove(event) {
-    if (!isTouchDragging || !touchDraggedElement) return;
-
-    event.preventDefault();
-
-    const touch = event.touches[0];
-
-    touchDraggedElement.style.visibility = 'hidden';
-    const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
-    touchDraggedElement.style.visibility = '';
-
-    const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card') : null;
-
-    // Determine the current valid target card for touch
-    let currentTouchTarget = null;
-    if (targetCard && targetCard !== touchDraggedElement) {
-        currentTouchTarget = targetCard;
-    }
-
-    // If the target is different from the currently highlighted one
-    if (currentTouchTarget !== dragTargetElement) {
-        // Remove highlight from the previous target (if any)
-        if (dragTargetElement) {
-            dragTargetElement.classList.remove('drag-over');
-        }
-        // Add highlight to the new target (if any)
-        if (currentTouchTarget) {
-            currentTouchTarget.classList.add('drag-over');
-        }
-        // Update the tracked target element
-        dragTargetElement = currentTouchTarget;
-    }
-}
-
-function handleTouchEnd(event) {
-    if (!isTouchDragging || !touchDraggedElement) {
-         clearDragOverStyles();
-         if (touchDraggedElement) touchDraggedElement.classList.remove('dragging');
-         isTouchDragging = false;
-         draggedVideoId = null;
-         touchDraggedElement = null;
-         dragTargetElement = null;
-        return;
-    }
-
-    const dropTargetId = dragTargetElement ? dragTargetElement.dataset.videoId : null;
-
-    // Reset visual styles first
-    touchDraggedElement.classList.remove('dragging');
-    clearDragOverStyles(); // Clear highlight
-
-    // Perform the drop action
-    if (draggedVideoId && dropTargetId && dropTargetId !== draggedVideoId) {
-        handleReorderVideo(draggedVideoId, dropTargetId);
-        if (navigator.vibrate) {
-             navigator.vibrate([50, 50, 50]);
-        }
-    }
-
-    // Reset state variables
-    isTouchDragging = false;
-    draggedVideoId = null;
-    touchDraggedElement = null;
-    dragTargetElement = null;
-}
+// --- End Media Session API Integration ---
 
 // --- Drag and Drop (Playlists) ---
 let draggedPlaylistId = null;
