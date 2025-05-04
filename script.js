@@ -1553,6 +1553,95 @@ function handleReorderPlaylist(playlistIdToMove, targetPlaylistId) {
     showToast('Playlist order updated.', 'info', 1500); // Short confirmation
 }
 
+// --- Touch Event Handlers for Video Drag/Drop ---
+
+function handleTouchStart(event) {
+    const videoCard = event.target.closest('.video-card');
+    // Only start drag if touching the drag handle or the card itself (if handle isn't the primary target)
+    // and the card is draggable.
+    if (videoCard && videoCard.draggable) {
+        // Prevent drag if touching interactive elements like buttons within the card
+        if (event.target.closest('button')) {
+            return;
+        }
+
+        // Prevent page scroll when starting a drag on a card
+        event.preventDefault();
+
+        touchDraggedElement = videoCard;
+        draggedVideoId = videoCard.dataset.videoId;
+        isTouchDragging = true;
+        touchDragStartY = event.touches[0].clientY; // Store initial Y for potential scroll logic
+
+        // Add dragging class slightly delayed to allow visual feedback
+        setTimeout(() => {
+            if (isTouchDragging && touchDraggedElement) { // Check if drag is still active
+                 touchDraggedElement.classList.add('dragging');
+            }
+        }, 100); // Adjust delay if needed
+         // console.log("Touch Start:", draggedVideoId);
+    } else {
+        isTouchDragging = false;
+        touchDraggedElement = null;
+        draggedVideoId = null;
+    }
+}
+
+function handleTouchMove(event) {
+    if (!isTouchDragging || !touchDraggedElement) return;
+
+    // Prevent scrolling while dragging
+    event.preventDefault();
+
+    const touch = event.touches[0];
+    const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
+    const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card') : null;
+
+    let currentTarget = null;
+    // Check if we are over a different draggable card
+    if (targetCard && targetCard.draggable && targetCard !== touchDraggedElement) {
+        currentTarget = targetCard;
+    }
+
+    // Update highlight based on the current target
+    if (currentTarget !== dragTargetElement) {
+        // Remove highlight from the previous target
+        if (dragTargetElement) {
+            dragTargetElement.classList.remove('drag-over');
+        }
+        // Add highlight to the new target
+        if (currentTarget) {
+            currentTarget.classList.add('drag-over');
+        }
+        // Update the tracked target
+        dragTargetElement = currentTarget;
+         // console.log("Touch Move - Over:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
+    }
+}
+
+function handleTouchEnd(event) {
+    if (!isTouchDragging || !touchDraggedElement) return;
+
+     // console.log("Touch End - Dragged:", draggedVideoId, "Target:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
+
+    // Check if we ended on a valid drop target
+    if (draggedVideoId && dragTargetElement && dragTargetElement.dataset.videoId !== draggedVideoId) {
+        // Perform the reorder logic
+        handleReorderVideo(draggedVideoId, dragTargetElement.dataset.videoId);
+    }
+
+    // Cleanup classes regardless of drop success
+    touchDraggedElement.classList.remove('dragging');
+    clearDragOverStyles(); // This clears .drag-over from dragTargetElement
+
+    // Reset all touch drag state variables
+    isTouchDragging = false;
+    touchDraggedElement = null;
+    draggedVideoId = null;
+    dragTargetElement = null;
+    touchDragStartY = 0;
+}
+
 // --- Start the app ---
 init();
 
