@@ -52,6 +52,9 @@ let lastSidebarWidth = null;
 let isTouchDragging = false;
 let touchDragStartY = 0;
 let touchDraggedElement = null;
+// State for differentiating touch scroll/drag from tap-to-play
+let potentialPlayVideoId = null;
+let potentialPlayCard = null;
 // Pagination State
 const videosPerPage = 20; // Number of videos to show per page
 let currentPage = 1;
@@ -1555,15 +1558,17 @@ function handleTouchStart(event) {
     const videoCard = event.target.closest('.video-card');
     // Ensure touch is on a valid, draggable card
     if (!videoCard || !videoCard.draggable) {
-        isTouchDragging = false; // Ensure state is reset if touch is outside cards
+        isTouchDragging = false;
         touchDraggedElement = null;
         draggedVideoId = null;
+        potentialPlayVideoId = null; // Reset potential play
+        potentialPlayCard = null;
         return;
     }
 
     const videoId = videoCard.dataset.videoId;
 
-    // Ignore touches on interactive elements within the card
+    // Ignore touches on interactive elements within the card (buttons)
     if (event.target.closest('button') || event.target.closest('.delete-video-btn')) {
         // Let the 'click' event handler deal with buttons
         return;
@@ -1572,8 +1577,7 @@ function handleTouchStart(event) {
     // Check if the touch is specifically on the drag handle
     if (event.target.closest('.drag-handle')) {
         // --- Initiate Drag ---
-        // Prevent page scroll ONLY when starting a drag via the handle
-        event.preventDefault();
+        event.preventDefault(); // Prevent page scroll ONLY when starting a drag via the handle
 
         touchDraggedElement = videoCard;
         draggedVideoId = videoId;
@@ -1582,90 +1586,120 @@ function handleTouchStart(event) {
 
         // Add dragging class slightly delayed for visual feedback
         setTimeout(() => {
-            // Check if drag is still active and element exists
             if (isTouchDragging && touchDraggedElement) {
                 touchDraggedElement.classList.add('dragging');
             }
         }, 100);
         // console.log("Touch Start - Drag Init:", draggedVideoId);
 
-    } else {
-        // --- Treat as Play Intent ---
-        // Prevent potential browser default actions like text selection or context menu on long press,
-        // but allow the subsequent 'click' event if needed (though playing here is faster).
-        // Testing might be needed to see if preventDefault() is required or interferes.
-        // event.preventDefault(); // Optional: Uncomment if default actions interfere
+        // Ensure potential play state is cleared if drag starts
+        potentialPlayVideoId = null;
+        potentialPlayCard = null;
+        videoCard.classList.remove('touch-active'); // Remove active class if it was somehow set
 
-        // Reset any potential lingering drag state
+    } else {
+        // --- Potential Play Intent ---
+        // Don't preventDefault here - allow scrolling initially.
+        // Reset drag state just in case
         isTouchDragging = false;
         touchDraggedElement = null;
-        draggedVideoId = null; // Ensure draggedVideoId is null if not dragging
+        draggedVideoId = null;
 
-        // Play the video directly on touchstart for instant feedback
-        // console.log("Touch Start - Play Intent:", videoId);
-        playVideo(videoId);
+        // Store the target video but DO NOT play yet
+        potentialPlayVideoId = videoId;
+        potentialPlayCard = videoCard;
+        videoCard.classList.add('touch-active'); // Add visual feedback for potential tap
 
-        // We might want to add a slight visual feedback like a brief 'active' state
-        videoCard.classList.add('touch-active');
-        setTimeout(() => videoCard.classList.remove('touch-active'), 150); // Remove feedback style quickly
+        // console.log("Touch Start - Potential Play:", videoId);
     }
 }
 
 function handleTouchMove(event) {
-    // This function remains the same, only proceeds if isTouchDragging is true
-    if (!isTouchDragging || !touchDraggedElement) return;
+    if (isTouchDragging) {
+        // --- Handle Drag Movement ---
+        if (!touchDraggedElement) return;
 
-    // Prevent scrolling while dragging
-    event.preventDefault();
+        // Prevent scrolling while dragging
+        event.preventDefault();
 
-    const touch = event.touches[0];
-    const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
-    const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card') : null;
+        const touch = event.touches[0];
+        const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
+        const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card') : null;
 
-    let currentTarget = null;
-    // Check if we are over a different draggable card
-    if (targetCard && targetCard.draggable && targetCard !== touchDraggedElement) {
-        currentTarget = targetCard;
-    }
-
-    // Update highlight based on the current target
-    if (currentTarget !== dragTargetElement) {
-        // Remove highlight from the previous target
-        if (dragTargetElement) {
-            dragTargetElement.classList.remove('drag-over');
+        let currentTarget = null;
+        // Check if we are over a different draggable card
+        if (targetCard && targetCard.draggable && targetCard !== touchDraggedElement) {
+            currentTarget = targetCard;
         }
-        // Add highlight to the new target
-        if (currentTarget) {
-            currentTarget.classList.add('drag-over');
+
+        // Update highlight based on the current target
+        if (currentTarget !== dragTargetElement) {
+            if (dragTargetElement) dragTargetElement.classList.remove('drag-over');
+            if (currentTarget) currentTarget.classList.add('drag-over');
+            dragTargetElement = currentTarget;
+            // console.log("Touch Move - Drag Over:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
         }
-        // Update the tracked target
-        dragTargetElement = currentTarget;
-         // console.log("Touch Move - Over:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
+    } else if (potentialPlayVideoId) {
+        // --- Handle Scroll During Potential Play ---
+        // If touch moves significantly while a play was potential, cancel the play.
+        // We can use a small threshold, but for simplicity now, any move cancels.
+        // console.log("Touch Move - Canceling Potential Play:", potentialPlayVideoId);
+        if (potentialPlayCard) {
+            potentialPlayCard.classList.remove('touch-active');
+        }
+        potentialPlayVideoId = null;
+        potentialPlayCard = null;
+        // Do NOT preventDefault here, allow the scroll to happen.
     }
 }
 
+
 function handleTouchEnd(event) {
-    // This function remains mostly the same, handles the drop if isTouchDragging was true
-    if (!isTouchDragging || !touchDraggedElement) return; // Only process if a drag was initiated
+    // Check if a drag operation was active
+    if (isTouchDragging) {
+        // --- Handle Drop ---
+        // console.log("Touch End - Drag Drop:", draggedVideoId, "Target:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
 
-     // console.log("Touch End - Dragged:", draggedVideoId, "Target:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
+        // Check if we ended on a valid drop target during a drag
+        if (draggedVideoId && dragTargetElement && dragTargetElement.dataset.videoId !== draggedVideoId) {
+            handleReorderVideo(draggedVideoId, dragTargetElement.dataset.videoId);
+        }
 
-    // Check if we ended on a valid drop target during a drag
-    if (draggedVideoId && dragTargetElement && dragTargetElement.dataset.videoId !== draggedVideoId) {
-        // Perform the reorder logic
-        handleReorderVideo(draggedVideoId, dragTargetElement.dataset.videoId);
+        // Cleanup drag classes
+        if (touchDraggedElement) {
+             touchDraggedElement.classList.remove('dragging');
+        }
+        clearDragOverStyles(); // This clears .drag-over from dragTargetElement
+
+        // Reset all touch drag state variables
+        isTouchDragging = false;
+        touchDraggedElement = null;
+        draggedVideoId = null;
+        dragTargetElement = null;
+        touchDragStartY = 0;
+
+    } else if (potentialPlayVideoId && potentialPlayCard) {
+        // --- Handle Tap to Play ---
+        // If drag wasn't active AND a potential play video is still set, trigger play.
+        // This means touchstart and touchend happened without a significant touchmove in between.
+        // console.log("Touch End - Executing Play:", potentialPlayVideoId);
+        playVideo(potentialPlayVideoId);
+        potentialPlayCard.classList.remove('touch-active'); // Remove feedback style
+    } else {
+        // --- Handle Other Touch Ends (e.g., after scroll) ---
+        // console.log("Touch End - No action (likely scroll or tap outside play area)");
+        // Just ensure any lingering active class is removed if needed
+        if (potentialPlayCard) { // Check potentialPlayCard as it might have been cleared by move
+           potentialPlayCard.classList.remove('touch-active');
+        } else { // Or find any card with the class (less efficient but safer)
+            const activeCard = videoGridEl.querySelector('.video-card.touch-active');
+            if (activeCard) activeCard.classList.remove('touch-active');
+        }
     }
 
-    // Cleanup classes regardless of drop success, only if dragging occurred
-    touchDraggedElement.classList.remove('dragging');
-    clearDragOverStyles(); // This clears .drag-over from dragTargetElement
-
-    // Reset all touch drag state variables
-    isTouchDragging = false;
-    touchDraggedElement = null;
-    draggedVideoId = null;
-    dragTargetElement = null;
-    touchDragStartY = 0;
+    // Always reset potential play state at the end of any touch interaction
+    potentialPlayVideoId = null;
+    potentialPlayCard = null;
 }
 
 // --- Start the app ---
