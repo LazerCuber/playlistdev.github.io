@@ -193,23 +193,11 @@ function setupEventListeners() {
         if (!videoCard) return;
         const videoId = videoCard.dataset.videoId;
 
-        // --- MODIFICATION START ---
-        // Check if the click specifically originated from the drag handle or the delete button
-        const isDragHandleClick = event.target.closest('.drag-handle');
-        const isDeleteButtonClick = event.target.closest('.delete-video-btn');
-
-        if (isDeleteButtonClick) {
-            event.stopPropagation(); // Prevent triggering playVideo if delete is clicked
-            handleDeleteVideo(videoId);
-        } else if (isDragHandleClick) {
-            // If the click was on the drag handle, do nothing (allow drag to start, prevent playing)
-            event.stopPropagation(); // Optional: stop propagation if needed, but often not necessary here
-            console.log("Clicked on drag handle, preventing play.");
-    } else {
-            // If the click was anywhere else on the card, play the video
+        if (event.target.closest('.delete-video-btn')) {
+            event.stopPropagation(); handleDeleteVideo(videoId);
+        } else if (!event.target.closest('.drag-handle')) { // Don't play if clicking the handle
             playVideo(videoId);
         }
-        // --- MODIFICATION END ---
     });
 
     // Drag and Drop Event Listeners
@@ -1567,53 +1555,71 @@ function handleReorderPlaylist(playlistIdToMove, targetPlaylistId) {
 
 // --- Touch Event Handlers for Video Drag/Drop ---
 
-// Revert handleTouchStart to its previous state BEFORE the handle-only restriction
 function handleTouchStart(event) {
     const videoCard = event.target.closest('.video-card');
-    // Prevent drag if touching interactive elements like buttons within the card
-    if (videoCard && videoCard.draggable) {
-         if (event.target.closest('button')) {
-             isTouchDragging = false; // Ensure dragging doesn't start on button tap
-             return;
-         }
-
-        // Original behavior: Allow drag start from anywhere on the card (except buttons)
-        // We rely on the user's scroll vs. drag gesture to differentiate.
-        // A slight delay before adding 'dragging' class can help distinguish tap vs drag start.
-
-        // event.preventDefault(); // REMOVED - Avoid preventing default here to allow clicks/taps
-
-        touchDraggedElement = videoCard;
-        draggedVideoId = videoCard.dataset.videoId;
-        isTouchDragging = true; // Assume drag start, move logic will confirm
-        touchDragStartY = event.touches[0].clientY;
-
-        // Add dragging class slightly delayed to visually indicate potential drag
-        if (touchDraggedElement._touchDragTimeout) {
-            clearTimeout(touchDraggedElement._touchDragTimeout);
-        }
-        touchDraggedElement._touchDragTimeout = setTimeout(() => {
-            if (isTouchDragging && touchDraggedElement) { // Check if drag is still active
-                touchDraggedElement.classList.add('dragging');
-            }
-             touchDraggedElement._touchDragTimeout = null; // Clear timeout reference
-        }, 100);
-        // console.log("Touch Start on Handle:", draggedVideoId);
-    } else {
-        // If touch didn't start on the handle, ensure we are NOT in dragging mode
-        // This allows normal scrolling on the rest of the card
-        isTouchDragging = false;
+    // Ensure touch is on a valid, draggable card
+    if (!videoCard || !videoCard.draggable) {
+        isTouchDragging = false; // Ensure state is reset if touch is outside cards
         touchDraggedElement = null;
         draggedVideoId = null;
-        // console.log("Touch Start elsewhere, allowing scroll.");
+        return;
     }
-    // --- MODIFICATION END ---
+
+    const videoId = videoCard.dataset.videoId;
+
+    // Ignore touches on interactive elements within the card
+    if (event.target.closest('button') || event.target.closest('.delete-video-btn')) {
+        // Let the 'click' event handler deal with buttons
+        return;
+    }
+
+    // Check if the touch is specifically on the drag handle
+    if (event.target.closest('.drag-handle')) {
+        // --- Initiate Drag ---
+        // Prevent page scroll ONLY when starting a drag via the handle
+        event.preventDefault();
+
+        touchDraggedElement = videoCard;
+        draggedVideoId = videoId;
+        isTouchDragging = true;
+        touchDragStartY = event.touches[0].clientY; // Store initial Y
+
+        // Add dragging class slightly delayed for visual feedback
+        setTimeout(() => {
+            // Check if drag is still active and element exists
+            if (isTouchDragging && touchDraggedElement) {
+                touchDraggedElement.classList.add('dragging');
+            }
+        }, 100);
+        // console.log("Touch Start - Drag Init:", draggedVideoId);
+
+    } else {
+        // --- Treat as Play Intent ---
+        // Prevent potential browser default actions like text selection or context menu on long press,
+        // but allow the subsequent 'click' event if needed (though playing here is faster).
+        // Testing might be needed to see if preventDefault() is required or interferes.
+        // event.preventDefault(); // Optional: Uncomment if default actions interfere
+
+        // Reset any potential lingering drag state
+        isTouchDragging = false;
+        touchDraggedElement = null;
+        draggedVideoId = null; // Ensure draggedVideoId is null if not dragging
+
+        // Play the video directly on touchstart for instant feedback
+        // console.log("Touch Start - Play Intent:", videoId);
+        playVideo(videoId);
+
+        // We might want to add a slight visual feedback like a brief 'active' state
+        videoCard.classList.add('touch-active');
+        setTimeout(() => videoCard.classList.remove('touch-active'), 150); // Remove feedback style quickly
+    }
 }
 
 function handleTouchMove(event) {
+    // This function remains the same, only proceeds if isTouchDragging is true
     if (!isTouchDragging || !touchDraggedElement) return;
 
-    // Prevent scrolling ONLY when actively dragging (started on handle)
+    // Prevent scrolling while dragging
     event.preventDefault();
 
     const touch = event.touches[0];
@@ -1643,26 +1649,19 @@ function handleTouchMove(event) {
 }
 
 function handleTouchEnd(event) {
-    // Clear any pending timeout for adding the dragging class
-    if (touchDraggedElement && touchDraggedElement._touchDragTimeout) {
-        clearTimeout(touchDraggedElement._touchDragTimeout);
-        touchDraggedElement._touchDragTimeout = null;
-    }
-
-    if (!isTouchDragging || !touchDraggedElement) return;
+    // This function remains mostly the same, handles the drop if isTouchDragging was true
+    if (!isTouchDragging || !touchDraggedElement) return; // Only process if a drag was initiated
 
      // console.log("Touch End - Dragged:", draggedVideoId, "Target:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
 
-    // Check if we ended on a valid drop target
+    // Check if we ended on a valid drop target during a drag
     if (draggedVideoId && dragTargetElement && dragTargetElement.dataset.videoId !== draggedVideoId) {
         // Perform the reorder logic
         handleReorderVideo(draggedVideoId, dragTargetElement.dataset.videoId);
     }
 
-    // Cleanup classes regardless of drop success
-    if(touchDraggedElement) { // Check if element exists before removing class
-        touchDraggedElement.classList.remove('dragging');
-    }
+    // Cleanup classes regardless of drop success, only if dragging occurred
+    touchDraggedElement.classList.remove('dragging');
     clearDragOverStyles(); // This clears .drag-over from dragTargetElement
 
     // Reset all touch drag state variables
