@@ -414,7 +414,7 @@ function onPlayerReady(event) {
     const readyVideoId = videoData ? videoData.video_id : null;
 
     if (readyVideoId) {
-         console.log("Player ready for video:", readyVideoId, "- Explicitly calling playVideo()");
+         console.log("Player ready for video:", readyVideoId, "- Attempting play with slight delay.");
          // Ensure highlight and media session are correct for the video that just loaded
          currentlyPlayingVideoId = readyVideoId;
          updatePlayingVideoHighlight(readyVideoId);
@@ -425,9 +425,22 @@ function onPlayerReady(event) {
                  updateMediaSessionMetadata(video);
              }
          }
-         // Explicitly call play now that autoplay is removed.
-         // This is the crucial part for this approach.
-         event.target.playVideo();
+         // Add a small delay before calling playVideo
+         setTimeout(() => {
+            // Check if the player still exists and is ready, as state might change during the delay
+            if (ytPlayer && isPlayerReady && typeof ytPlayer.playVideo === 'function') {
+                 try {
+                    console.log("Executing delayed playVideo() for:", readyVideoId);
+                    event.target.playVideo();
+                 } catch (e) {
+                     console.error("Error during delayed playVideo():", e);
+                     // Maybe handle error differently here if needed
+                 }
+            } else {
+                console.log("Player state changed or player destroyed during delay, aborting playVideo().");
+            }
+         }, 100); // Delay of 100 milliseconds
+
     } else {
          console.warn("Player ready but couldn't get video ID.");
     }
@@ -921,19 +934,22 @@ function playVideo(videoId) {
         // Player exists, check readiness
         if (isPlayerReady) {
             console.log("Player exists and is ready. Loading video:", videoId);
+            // Scroll into view if needed (only if NOT in audio-only mode)
+            if (!isAudioOnlyMode) {
+               setTimeout(() => {
+                   if (playerWrapperEl.offsetParent !== null) {
+                        playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                   }
+               }, 100);
+            }
             try {
-                ytPlayer.loadVideoById(videoId); // Let onPlayerStateChange handle play confirmation
-                // Scroll into view if needed (only if NOT in audio-only mode)
-                 if (!isAudioOnlyMode) {
-                    setTimeout(() => {
-                        if (playerWrapperEl.offsetParent !== null) {
-                             playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                        }
-                    }, 100);
-                 }
+                ytPlayer.loadVideoById(videoId); // Load the new video
+                // Explicitly try to play it immediately after loading when player is ready.
+                // This reinforces the intent to play after the user's click.
+                ytPlayer.playVideo();
             } catch (error) {
-                console.error("Error calling loadVideoById:", error);
-                showToast("Failed to load video.", "error");
+                console.error("Error calling loadVideoById or playVideo:", error); // Updated error log
+                showToast("Failed to load or play video.", "error"); // Updated toast message
                 handleClosePlayer();
             }
         } else {
