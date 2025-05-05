@@ -1556,41 +1556,47 @@ function handleReorderPlaylist(playlistIdToMove, targetPlaylistId) {
 // --- Touch Event Handlers for Video Drag/Drop ---
 
 function handleTouchStart(event) {
+    // --- MODIFICATION START ---
+    // Only initiate drag if the touch starts directly on the drag handle
+    const dragHandle = event.target.closest('.drag-handle');
     const videoCard = event.target.closest('.video-card');
-    // Only start drag if touching the drag handle or the card itself (if handle isn't the primary target)
-    // and the card is draggable.
-    if (videoCard && videoCard.draggable) {
-        // Prevent drag if touching interactive elements like buttons within the card
-        if (event.target.closest('button')) {
-            return;
-        }
 
-        // Prevent page scroll when starting a drag on a card
+    if (dragHandle && videoCard && videoCard.draggable) {
+        // Prevent the browser's default touch behavior (like scrolling) ONLY when dragging starts on the handle
         event.preventDefault();
 
         touchDraggedElement = videoCard;
         draggedVideoId = videoCard.dataset.videoId;
         isTouchDragging = true;
-        touchDragStartY = event.touches[0].clientY; // Store initial Y for potential scroll logic
+        touchDragStartY = event.touches[0].clientY; // Store initial Y
 
-        // Add dragging class slightly delayed to allow visual feedback
-        setTimeout(() => {
+        // Add dragging class slightly delayed
+        // Ensure we clear any previous timeouts if touches happen rapidly
+        if (touchDraggedElement._touchDragTimeout) {
+            clearTimeout(touchDraggedElement._touchDragTimeout);
+        }
+        touchDraggedElement._touchDragTimeout = setTimeout(() => {
             if (isTouchDragging && touchDraggedElement) { // Check if drag is still active
-                 touchDraggedElement.classList.add('dragging');
+                touchDraggedElement.classList.add('dragging');
             }
-        }, 100); // Adjust delay if needed
-         // console.log("Touch Start:", draggedVideoId);
+             touchDraggedElement._touchDragTimeout = null; // Clear timeout reference
+        }, 100);
+        // console.log("Touch Start on Handle:", draggedVideoId);
     } else {
+        // If touch didn't start on the handle, ensure we are NOT in dragging mode
+        // This allows normal scrolling on the rest of the card
         isTouchDragging = false;
         touchDraggedElement = null;
         draggedVideoId = null;
+        // console.log("Touch Start elsewhere, allowing scroll.");
     }
+    // --- MODIFICATION END ---
 }
 
 function handleTouchMove(event) {
     if (!isTouchDragging || !touchDraggedElement) return;
 
-    // Prevent scrolling while dragging
+    // Prevent scrolling ONLY when actively dragging (started on handle)
     event.preventDefault();
 
     const touch = event.touches[0];
@@ -1620,6 +1626,12 @@ function handleTouchMove(event) {
 }
 
 function handleTouchEnd(event) {
+    // Clear any pending timeout for adding the dragging class
+    if (touchDraggedElement && touchDraggedElement._touchDragTimeout) {
+        clearTimeout(touchDraggedElement._touchDragTimeout);
+        touchDraggedElement._touchDragTimeout = null;
+    }
+
     if (!isTouchDragging || !touchDraggedElement) return;
 
      // console.log("Touch End - Dragged:", draggedVideoId, "Target:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
@@ -1631,7 +1643,9 @@ function handleTouchEnd(event) {
     }
 
     // Cleanup classes regardless of drop success
-    touchDraggedElement.classList.remove('dragging');
+    if(touchDraggedElement) { // Check if element exists before removing class
+        touchDraggedElement.classList.remove('dragging');
+    }
     clearDragOverStyles(); // This clears .drag-over from dragTargetElement
 
     // Reset all touch drag state variables
