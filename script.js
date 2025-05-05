@@ -393,7 +393,7 @@ function createPlayer(videoId) {
             'playsinline': 1,
             'rel': 0,
             'enablejsapi': 1,
-            'autoplay': 1 // Autoplay should work better now as creation is tied to user action
+            // 'autoplay': 1 // REMOVED this line
         },
         events: {
             'onReady': onPlayerReady,
@@ -406,16 +406,12 @@ function createPlayer(videoId) {
 function onPlayerReady(event) {
     console.log("Player Ready");
     isPlayerReady = true;
-    // Autoplay is handled by playerVars now, but we ensure playVideo is called
-    // This might be redundant if autoplay=1 works reliably, but safe to keep.
-    // Important: We get the videoId from the player instance itself now,
-    // as videoIdToPlayOnReady might have been cleared or is irrelevant
-    // if the player was created for a different video later.
+
     const videoData = event.target.getVideoData();
     const readyVideoId = videoData ? videoData.video_id : null;
 
     if (readyVideoId) {
-         console.log("Player ready for video:", readyVideoId);
+         console.log("Player ready for video:", readyVideoId, "- Explicitly calling playVideo()");
          // Ensure highlight and media session are correct for the video that just loaded
          currentlyPlayingVideoId = readyVideoId;
          updatePlayingVideoHighlight(readyVideoId);
@@ -426,8 +422,8 @@ function onPlayerReady(event) {
                  updateMediaSessionMetadata(video);
              }
          }
-         // Explicitly call play, though autoplay=1 might already do it.
-         // This reinforces the intent, especially after manual creation.
+         // Explicitly call play now that autoplay is removed.
+         // This is the crucial part for this approach.
          event.target.playVideo();
     } else {
          console.warn("Player ready but couldn't get video ID.");
