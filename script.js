@@ -1446,14 +1446,15 @@ function setupMediaSessionActionHandlers() {
     });
 
     navigator.mediaSession.setActionHandler('nexttrack', () => {
-        // Always allow next track via media controls, regardless of autoplay setting
-        playNextVideo();
+         // Ensure next track respects autoplay setting if triggered externally
+         if(isAutoplayEnabled) {
+            playNextVideo();
+         } else {
+             console.log("Media Session: Next track ignored (Autoplay off).");
+             // Optionally provide feedback?
+             showToast("Autoplay is disabled.", "info", 1500);
+         }
     });
-
-    // Add these handlers to your setupMediaSessionActionHandlers function
-
-    navigator.mediaSession.setActionHandler('seekbackward', null);
-    navigator.mediaSession.setActionHandler('seekforward', null);
 }
 
 // --- End Media Session API Integration ---
@@ -1730,47 +1731,5 @@ function updateAudioOnlyDisplay(videoTitle) {
     } else {
         audioOnlyTitleEl.textContent = '';
         audioOnlyInfoEl.classList.add('hidden');
-    }
-}
-
-// Add after playNextVideo() function (around line 589)
-function playPreviousVideo() {
-    // Add null check for ytPlayer
-    if (!ytPlayer || !currentPlaylistId) return;
-
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (!currentPlaylist || currentPlaylist.videos.length < 1) return;
-
-    if (!currentlyPlayingVideoId && currentPlaylist.videos.length > 0) {
-        console.log("playPreviousVideo called but no video was playing. Starting from last video.");
-        playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
-        return;
-    }
-    if (!currentlyPlayingVideoId || currentPlaylist.videos.length < 2) {
-        // If only one video, or no current video, stop? Or replay? For now, stop.
-        handleClosePlayer(); // Close player if we can't go backward
-        return;
-    }
-
-    const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
-    if (currentIndex === -1) {
-        console.warn("Currently playing video not found in playlist during playPrevious. Playing last video.");
-        if (currentPlaylist.videos.length > 0) {
-            playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
-        } else {
-            handleClosePlayer(); // Close if playlist became empty
-        }
-        return;
-    }
-
-    // Calculate previous index with wrap-around
-    const prevIndex = (currentIndex - 1 + currentPlaylist.videos.length) % currentPlaylist.videos.length;
-    const prevVideo = currentPlaylist.videos[prevIndex];
-    if (prevVideo) {
-        console.log(`Playing previous video: ${prevVideo.title} (Index: ${prevIndex})`);
-        playVideo(prevVideo.id);
-    } else {
-        console.error(`Could not find previous video at index ${prevIndex}`);
-        handleClosePlayer(); // Close if previous video isn't found
     }
 }
