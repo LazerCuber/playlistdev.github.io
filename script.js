@@ -95,11 +95,26 @@ function init() {
     updateThemeIcon();
 }
 
+// --- YouTube Player API ---
+let ytApiLoadPromise = null;
+
 function loadYouTubePlayerAPI() {
-    const tag = document.createElement('script');
-    tag.src = "https://www.youtube.com/iframe_api";
-    const firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    if (ytApiLoadPromise) return ytApiLoadPromise; // Return existing promise if already loading
+
+    ytApiLoadPromise = new Promise((resolve) => {
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        // Ensure the global callback is set
+        window.onYouTubeIframeAPIReady = () => {
+            isYTApiReady = true;
+            resolve();
+        };
+    });
+
+    return ytApiLoadPromise;
 }
 
 // --- Sidebar Resizing ---
@@ -854,58 +869,38 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
     renderVideos();
 }
 
-function playVideo(videoId) {
+async function playVideo(videoId) {
     if (!videoId) return;
 
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    let videoData = null;
-    if (currentPlaylist) {
-        videoData = currentPlaylist.videos.find(v => v.id === videoId);
-    }
+    const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
 
-    updateMediaSessionMetadata(videoData || null);
-
-    if (!isYTApiReady) {
-        videoIdToPlayOnReady = videoId;
-        showToast("Player is loading...", "info", 1500);
-        playerWrapperEl.classList.remove('hidden');
-        if (isAudioOnlyMode && videoData) {
-             updateAudioOnlyDisplay(videoData.title);
-        } else {
-             updateAudioOnlyDisplay(null);
-        }
-        return;
-    }
-
+    // Update UI immediately
     playerWrapperEl.classList.remove('hidden');
     currentlyPlayingVideoId = videoId;
     updatePlayingVideoHighlight(videoId);
-    applyAudioOnlyClass();
-    updateAudioOnlyDisplay(videoData ? videoData.title : null);
+    updateMediaSessionMetadata(videoData || null);
+    updateAudioOnlyDisplay(videoData?.title || null);
 
-    if (ytPlayer) {
-        if (isPlayerReady) {
-            if (!isAudioOnlyMode) {
-               setTimeout(() => {
-                   if (playerWrapperEl.offsetParent !== null) {
-                        playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                   }
-               }, 100); // Delay scroll slightly
-            }
-            try {
-                ytPlayer.loadVideoById(videoId);
-                ytPlayer.playVideo();
-            } catch (error) {
-                console.error("Error calling loadVideoById or playVideo:", error); // Keep critical error
-                showToast("Failed to load or play video.", "error");
-                handleClosePlayer();
-            }
+    try {
+        // Wait for API to be ready
+        if (!isYTApiReady) {
+            await loadYouTubePlayerAPI();
+        }
+
+        // Initialize or reuse player
+        if (!ytPlayer) {
+            ytPlayer = createPlayer(videoId);
+        } else if (isPlayerReady) {
+            ytPlayer.loadVideoById(videoId);
+            ytPlayer.playVideo();
         } else {
             videoIdToPlayOnReady = videoId;
         }
-    } else {
-        isPlayerReady = false;
-        ytPlayer = createPlayer(videoId);
+    } catch (error) {
+        console.error("Playback error:", error);
+        showToast("Failed to play video. Please try again.", "error");
+        handleClosePlayer();
     }
 }
 
