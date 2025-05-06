@@ -79,8 +79,8 @@ function init() {
     loadSidebarWidth();
     renderPlaylists();
 
-    // NOTE: Player is no longer created here, only when needed.
-    // onYouTubeIframeAPIReady will just set isYTApiReady = true;
+    // Load YouTube Player API immediately
+    loadYouTubePlayerAPI();
 
     const lastSelectedId = localStorage.getItem('lastSelectedPlaylistId');
     if (lastSelectedId && playlists.some(p => p.id === parseInt(lastSelectedId))) {
@@ -93,6 +93,13 @@ function init() {
 
     setupEventListeners();
     updateThemeIcon();
+}
+
+function loadYouTubePlayerAPI() {
+    const tag = document.createElement('script');
+    tag.src = "https://www.youtube.com/iframe_api";
+    const firstScriptTag = document.getElementsByTagName('script')[0];
+    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 }
 
 // --- Sidebar Resizing ---
@@ -355,6 +362,7 @@ function createPlayer(videoId) {
             'playsinline': 1,
             'rel': 0,
             'enablejsapi': 1,
+            'autoplay': 1,
         },
         events: {
             'onReady': onPlayerReady,
@@ -370,19 +378,8 @@ function onPlayerReady(event) {
     const readyVideoId = videoData ? videoData.video_id : null;
 
     if (readyVideoId) {
-         currentlyPlayingVideoId = readyVideoId;
-         updatePlayingVideoHighlight(readyVideoId);
-         const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-         if (currentPlaylist) {
-             const video = currentPlaylist.videos.find(v => v.id === readyVideoId);
-             if (video) {
-                 updateMediaSessionMetadata(video);
-             }
-         }
          try {
-            if (ytPlayer && isPlayerReady && typeof ytPlayer.playVideo === 'function') {
-                 event.target.playVideo();
-            }
+            event.target.playVideo();
          } catch (e) {
              console.error("Error during playVideo() in onPlayerReady:", e); // Keep critical errors
          }
@@ -394,29 +391,46 @@ function onPlayerStateChange(event) {
     if (!ytPlayer) return;
 
     let videoData = null;
-    let videoId = null;
+    let videoIdFromEvent = null;
     try {
         videoData = event.target.getVideoData();
-        videoId = videoData ? videoData.video_id : null;
+        videoIdFromEvent = videoData ? videoData.video_id : null;
     } catch (e) {
         // Silently ignore if getting data fails
     }
 
-    currentlyPlayingVideoId = videoId;
+    if (videoIdFromEvent) {
+        currentlyPlayingVideoId = videoIdFromEvent;
+    }
 
     if (event.data === YT.PlayerState.PLAYING) {
-        updatePlayingVideoHighlight(currentlyPlayingVideoId);
-        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-        if (currentPlaylist && currentlyPlayingVideoId) {
-            const video = currentPlaylist.videos.find(v => v.id === currentlyPlayingVideoId);
-            if (video) {
-                updateMediaSessionMetadata(video);
-                updateAudioOnlyDisplay(video.title);
+        if (currentlyPlayingVideoId) {
+            updatePlayingVideoHighlight(currentlyPlayingVideoId);
+            const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+            if (currentPlaylist) {
+                const video = currentPlaylist.videos.find(v => v.id === currentlyPlayingVideoId);
+                if (video) {
+                    updateMediaSessionMetadata(video);
+                    updateAudioOnlyDisplay(video.title);
+                } else {
+                    updateAudioOnlyDisplay(null);
+                    updateMediaSessionMetadata(null);
+                }
             } else {
-                 updateAudioOnlyDisplay(null);
+                updateAudioOnlyDisplay(null);
+                updateMediaSessionMetadata(null);
             }
         } else {
-             updateAudioOnlyDisplay(null);
+            const freshVideoData = event.target.getVideoData();
+            const freshVideoId = freshVideoData ? freshVideoData.video_id : null;
+            if (freshVideoId) {
+                currentlyPlayingVideoId = freshVideoId;
+                updatePlayingVideoHighlight(freshVideoId);
+            } else {
+                updatePlayingVideoHighlight(null);
+                updateAudioOnlyDisplay(null);
+                updateMediaSessionMetadata(null);
+            }
         }
         if ('mediaSession' in navigator) {
             navigator.mediaSession.playbackState = "playing";
@@ -434,6 +448,7 @@ function onPlayerStateChange(event) {
         } else {
             updatePlayingVideoHighlight(null);
             updateAudioOnlyDisplay(null);
+            updateMediaSessionMetadata(null);
         }
     } else if (event.data === YT.PlayerState.BUFFERING) {
          // No explicit state change needed for buffering for media session
@@ -905,6 +920,7 @@ function stopVideo() {
     currentlyPlayingVideoId = null;
     updatePlayingVideoHighlight(null);
     updateAudioOnlyDisplay(null);
+    updateMediaSessionMetadata(null);
     // Let onPlayerStateChange or handleClosePlayer manage MediaSession state.
 }
 
@@ -1310,63 +1326,44 @@ function updateMediaSessionMetadata(video) {
 
     if (!video) {
         navigator.mediaSession.metadata = null;
-        // Only set state to none if we are explicitly clearing.
-        // Playback state changes should primarily be handled by onPlayerStateChange.
-        // navigator.mediaSession.playbackState = 'none';
-        console.log("Media Session metadata cleared."); // Log clearing
         return;
     }
 
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     const playlistName = currentPlaylist ? currentPlaylist.name : 'Playlist';
-    const safeTitle = video.title || 'Untitled Video'; // Ensure we always have a title
+    const safeTitle = video.title || 'Untitled Video';
 
     try {
         navigator.mediaSession.metadata = new MediaMetadata({
             title: safeTitle,
-            artist: 'YouTube', // Or dynamically set artist if available?
+            artist: 'YouTube',
             album: playlistName,
             artwork: [
-                // Provide various sizes if possible
-                { src: video.thumbnail.replace('mqdefault', 'hqdefault'), sizes: '480x360', type: 'image/jpeg' }, // Higher quality guess
-                { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' }, // Original mq
-                // { src: video.thumbnail.replace('mqdefault.jpg', 'default.jpg'), sizes: '120x90', type: 'image/jpeg' }, // Lower quality guess
+                { src: video.thumbnail.replace('mqdefault', 'hqdefault'), sizes: '480x360', type: 'image/jpeg' },
+                { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' },
             ]
         });
-        console.log("Media Session metadata updated for:", safeTitle); // Log update
     } catch (error) {
          console.error("Error setting Media Session metadata:", error);
     }
 
-
-    setupMediaSessionActionHandlers(); // Ensure handlers are attached/updated
+    setupMediaSessionActionHandlers();
 }
 
 function setupMediaSessionActionHandlers() {
      if (!('mediaSession' in navigator)) return;
 
-    navigator.mediaSession.setActionHandler('play', null);
-    navigator.mediaSession.setActionHandler('pause', null);
-    navigator.mediaSession.setActionHandler('stop', null);
-    navigator.mediaSession.setActionHandler('previoustrack', null);
-    navigator.mediaSession.setActionHandler('nexttrack', null);
-
     navigator.mediaSession.setActionHandler('play', () => {
-        // Add null check for ytPlayer
         if (ytPlayer && isPlayerReady && typeof ytPlayer.playVideo === 'function') {
             ytPlayer.playVideo();
-            // navigator.mediaSession.playbackState = "playing"; // State changes handled in onPlayerStateChange
         } else if (currentlyPlayingVideoId) {
-            // If player doesn't exist but we know what *should* be playing, try to play it
             playVideo(currentlyPlayingVideoId);
         }
     });
 
     navigator.mediaSession.setActionHandler('pause', () => {
-        // Add null check for ytPlayer
         if (ytPlayer && isPlayerReady && typeof ytPlayer.pauseVideo === 'function') {
             ytPlayer.pauseVideo();
-             // navigator.mediaSession.playbackState = "paused"; // State changes handled in onPlayerStateChange
         }
     });
 
@@ -1379,12 +1376,9 @@ function setupMediaSessionActionHandlers() {
     });
 
     navigator.mediaSession.setActionHandler('nexttrack', () => {
-         // Ensure next track respects autoplay setting if triggered externally
          if(isAutoplayEnabled) {
             playNextVideo();
          } else {
-             console.log("Media Session: Next track ignored (Autoplay off).");
-             // Optionally provide feedback?
              showToast("Autoplay is disabled.", "info", 1500);
          }
     });
