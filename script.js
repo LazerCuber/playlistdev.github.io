@@ -497,21 +497,17 @@ function onPlayerStateChange(event) {
 }
 
 function onPlayerError(event) {
-    // Add null check for ytPlayer
     if (!ytPlayer) return;
 
     console.error('YouTube Player Error:', event.data);
     let errorMsg = 'An unknown player error occurred.';
-    // Use event.target to get video data if possible
     const videoData = event.target.getVideoData ? event.target.getVideoData() : null;
-    const videoId = videoData ? videoData.video_id : currentlyPlayingVideoId; // Fallback to tracked ID
-    const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : 'Unknown video';
-
-    console.error(`Error occurred for video: ${videoUrl}`);
+    const videoId = videoData ? videoData.video_id : currentlyPlayingVideoId;
+    
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
-
+    
     let shouldSkip = false;
-
+    
     switch (event.data) {
         case 2: errorMsg = 'Invalid video ID or player parameter.'; shouldSkip = true; break;
         case 5: errorMsg = 'Error in the HTML5 player.'; shouldSkip = true; break;
@@ -519,15 +515,22 @@ function onPlayerError(event) {
         case 101: case 150: errorMsg = 'Playback disallowed by video owner.'; shouldSkip = true; break;
         default: errorMsg = `Player error code: ${event.data}`; shouldSkip = true; break;
     }
-
+    
     showToast(`Player Error: ${errorMsg}`, 'error');
-
-    // Attempt to skip ONLY if autoplay is enabled
+    
+    // If autoplay is on and we should skip, try the next video
     if (isAutoplayEnabled && shouldSkip) {
         showToast(`${errorMsg} Skipping to next video.`, 'info', 4000);
-        setTimeout(playNextVideo, 500);
+        // Ensure we don't get stuck in an error loop by adding a small delay
+        setTimeout(() => {
+            // Double-check the state before proceeding
+            if (ytPlayer && isAutoplayEnabled) {
+                playNextVideo();
+            } else {
+                handleClosePlayer();
+            }
+        }, 500);
     } else {
-        // If autoplay is off, or we shouldn't skip, stop and hide the player
         handleClosePlayer();
     }
 }
@@ -1309,9 +1312,8 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 function handleClosePlayer() {
-    stopVideo(); // Stop playback first (this now calls updateAudioOnlyDisplay(null))
-
-    // Destroy the player instance if it exists
+    stopVideo();
+    
     if (ytPlayer && typeof ytPlayer.destroy === 'function') {
         try {
             console.log("Destroying YT Player instance.");
@@ -1319,23 +1321,26 @@ function handleClosePlayer() {
         } catch (e) {
             console.error("Error destroying player:", e);
         } finally {
-             ytPlayer = null; // Set reference to null
-             isPlayerReady = false; // Reset ready state
+            ytPlayer = null;
+            isPlayerReady = false;
+            // Clean up any remaining elements in the player container
+            const playerContainer = document.getElementById('player');
+            if (playerContainer) {
+                playerContainer.innerHTML = '';
+            }
         }
     } else {
-        ytPlayer = null; // Ensure it's null even if destroy wasn't called/needed
+        ytPlayer = null;
         isPlayerReady = false;
     }
-
-    videoIdToPlayOnReady = null; // Clear any queued video
-    // currentlyPlayingVideoId = null; // Already done in stopVideo
+    
+    videoIdToPlayOnReady = null;
     playerWrapperEl.classList.add('hidden');
-    // bodyEl.classList.remove('audio-only-active'); // Don't remove this, keep the toggle state
-    updatePlayingVideoHighlight(null); // Ensure highlight is removed
-    updateAudioOnlyDisplay(null); // Explicitly ensure display is hidden
-
+    updatePlayingVideoHighlight(null);
+    updateAudioOnlyDisplay(null);
+    
     if ('mediaSession' in navigator) {
-        updateMediaSessionMetadata(null); // Clear metadata on close
+        updateMediaSessionMetadata(null);
     }
 }
 
@@ -1376,26 +1381,21 @@ function debounce(func, wait) {
 // --- Media Session API Integration ---
 
 function updateMediaSessionMetadata(video) {
-    if (!('mediaSession' in navigator)) {
-        // console.log("Media Session API not supported.");
-        return;
-    }
+    if (!('mediaSession' in navigator)) return;
 
     if (!video) {
         navigator.mediaSession.metadata = null;
         navigator.mediaSession.playbackState = 'none';
-        // console.log("Media Session metadata cleared.");
         return;
     }
 
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     const playlistName = currentPlaylist ? currentPlaylist.name : 'Playlist';
-
-    // console.log("Updating Media Session Metadata for:", video.title);
+    const safeTitle = video.title || 'Untitled Video'; // Ensure we always have a title
 
     navigator.mediaSession.metadata = new MediaMetadata({
-        title: video.title,
-        artist: 'YouTube', // Replace with channel name if available
+        title: safeTitle,
+        artist: 'YouTube',
         album: playlistName,
         artwork: [
             { src: video.thumbnail.replace('mqdefault', 'hqdefault'), sizes: '480x360', type: 'image/jpeg' },
@@ -1403,10 +1403,7 @@ function updateMediaSessionMetadata(video) {
         ]
     });
 
-    // Update playback state (usually done in onPlayerStateChange)
-    // navigator.mediaSession.playbackState = "playing"; // Set this when playback actually starts
-
-    setupMediaSessionActionHandlers(); // Ensure handlers are set up
+    setupMediaSessionActionHandlers();
 }
 
 function setupMediaSessionActionHandlers() {
@@ -1572,61 +1569,37 @@ function handleReorderPlaylist(playlistIdToMove, targetPlaylistId) {
 
 function handleTouchStart(event) {
     const videoCard = event.target.closest('.video-card');
-    // Ensure touch is on a valid, draggable card
-    if (!videoCard || !videoCard.draggable) {
-        isTouchDragging = false;
-        touchDraggedElement = null;
-        draggedVideoId = null;
-        potentialPlayVideoId = null; // Reset potential play
-        potentialPlayCard = null;
+    if (!videoCard || !videoCard.draggable) return;
+    
+    // Don't prevent default on buttons/controls
+    if (event.target.closest('button') || 
+        event.target.closest('.delete-video-btn') || 
+        event.target.closest('.controls')) {
         return;
     }
-
-    const videoId = videoCard.dataset.videoId;
-
-    // Ignore touches on interactive elements within the card (buttons)
-    if (event.target.closest('button') || event.target.closest('.delete-video-btn')) {
-        // Let the 'click' event handler deal with buttons
-        return;
-    }
-
-    // Check if the touch is specifically on the drag handle
+    
+    // Only prevent default for drag handles to allow normal scrolling
     if (event.target.closest('.drag-handle')) {
-        // --- Initiate Drag ---
-        event.preventDefault(); // Prevent page scroll ONLY when starting a drag via the handle
-
+        event.preventDefault();
+        
         touchDraggedElement = videoCard;
-        draggedVideoId = videoId;
+        draggedVideoId = videoCard.dataset.videoId;
         isTouchDragging = true;
-        touchDragStartY = event.touches[0].clientY; // Store initial Y
-
-        // Add dragging class slightly delayed for visual feedback
-        setTimeout(() => {
+        touchDragStartY = event.touches[0].clientY;
+        
+        requestAnimationFrame(() => {
             if (isTouchDragging && touchDraggedElement) {
                 touchDraggedElement.classList.add('dragging');
             }
-        }, 100);
-        // console.log("Touch Start - Drag Init:", draggedVideoId);
-
-        // Ensure potential play state is cleared if drag starts
+        });
+        
         potentialPlayVideoId = null;
         potentialPlayCard = null;
-        videoCard.classList.remove('touch-active'); // Remove active class if it was somehow set
-
     } else {
-        // --- Potential Play Intent ---
-        // Don't preventDefault here - allow scrolling initially.
-        // Reset drag state just in case
-        isTouchDragging = false;
-        touchDraggedElement = null;
-        draggedVideoId = null;
-
-        // Store the target video but DO NOT play yet
-        potentialPlayVideoId = videoId;
+        // For potential play, store ID but don't prevent scrolling
+        potentialPlayVideoId = videoCard.dataset.videoId;
         potentialPlayCard = videoCard;
-        videoCard.classList.add('touch-active'); // Add visual feedback for potential tap
-
-        // console.log("Touch Start - Potential Play:", videoId);
+        videoCard.classList.add('touch-active');
     }
 }
 
@@ -1724,9 +1697,10 @@ init();
 // Function to update the audio-only info display
 function updateAudioOnlyDisplay(videoTitle) {
     if (isAudioOnlyMode && videoTitle) {
+        // Using both textContent and innerHTML is redundant
         audioOnlyTitleEl.textContent = videoTitle;
-        escapeElement.textContent = videoTitle; // Use escape element for safety
-        audioOnlyTitleEl.innerHTML = escapeElement.innerHTML; // Set escaped HTML
+        escapeElement.textContent = videoTitle;
+        audioOnlyTitleEl.innerHTML = escapeElement.innerHTML;
         audioOnlyInfoEl.classList.remove('hidden');
     } else {
         audioOnlyTitleEl.textContent = '';
