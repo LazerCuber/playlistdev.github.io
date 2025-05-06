@@ -586,6 +586,50 @@ function playNextVideo() {
     }
 }
 
+function playPreviousVideo() {
+    // Add null check for ytPlayer and ensure a playlist is selected
+    if (!ytPlayer || !currentPlaylistId) return;
+
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    if (!currentPlaylist || currentPlaylist.videos.length < 1) return;
+
+    // If nothing is playing or only one video, maybe play the last or first?
+    if (!currentlyPlayingVideoId && currentPlaylist.videos.length > 0) {
+        console.log("playPreviousVideo called but no video was playing. Starting from last video.");
+        playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
+        return;
+    }
+     if (!currentlyPlayingVideoId || currentPlaylist.videos.length < 2) {
+        // If only one video or no current video, maybe just replay it or close?
+        // For consistency with playNext, close player if can't go back.
+        handleClosePlayer();
+        return;
+    }
+
+    const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
+    if (currentIndex === -1) {
+        console.warn("Currently playing video not found in playlist during playPrevious. Playing last video.");
+        if (currentPlaylist.videos.length > 0) {
+            playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
+        } else {
+             handleClosePlayer(); // Close if playlist became empty
+        }
+        return;
+    }
+
+    // Calculate previous index, wrapping around to the end if at the start
+    const prevIndex = (currentIndex - 1 + currentPlaylist.videos.length) % currentPlaylist.videos.length;
+    const prevVideo = currentPlaylist.videos[prevIndex];
+
+    if (prevVideo) {
+        console.log(`Playing previous video: ${prevVideo.title} (Index: ${prevIndex})`);
+        playVideo(prevVideo.id);
+    } else {
+        console.error(`Could not find previous video at index ${prevIndex}`);
+        handleClosePlayer(); // Close if previous video isn't found
+    }
+}
+
 // --- Local Storage & State ---
 function savePlaylists() { localStorage.setItem('playlists', JSON.stringify(playlists)); }
 function loadPlaylists() {
