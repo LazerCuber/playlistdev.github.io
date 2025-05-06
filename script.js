@@ -39,7 +39,7 @@ let playlists = [];
 let currentPlaylistId = null;
 let ytPlayer = null;
 let isPlayerReady = false; // New state variable
-let videoIdToPlayOnReady = null; // New state variable
+let lastRequestedVideoId = null; // ADDED: Tracks the last video user tried to play
 let isAutoplayEnabled = false;
 let isAudioOnlyMode = false; // Added state for audio-only
 let currentlyPlayingVideoId = null;
@@ -376,18 +376,20 @@ function updateThemeIcon() {
 
 // This function MUST be global for the API to find it
 function onYouTubeIframeAPIReady() {
-    console.log("YT API Ready. Player will be initialized on first play.");
+    console.log("YT API Ready."); // Simplified log
     isYTApiReady = true; // Mark API as ready
 
-    // If a video was queued *before* the API was ready,
-    // the playVideo call will now handle initialization.
-    if (videoIdToPlayOnReady) {
-        playVideo(videoIdToPlayOnReady);
+    // If a video was requested *before* the API was ready, try playing it now.
+    if (lastRequestedVideoId) {
+        console.log("API ready, processing potentially queued play request for:", lastRequestedVideoId);
+        playVideo(lastRequestedVideoId); // Call playVideo again now that API is ready
+    } else {
+         console.log("API ready, no video queued via lastRequestedVideoId.");
     }
 }
 
 function createPlayer(videoId) {
-    console.log("Creating new YT Player instance.");
+    console.log("Creating new YT Player instance for video:", videoId); // Added videoId to log
     return new YT.Player('player', {
         height: '100%',
         width: '100%',
@@ -396,7 +398,7 @@ function createPlayer(videoId) {
             'playsinline': 1,
             'rel': 0,
             'enablejsapi': 1,
-            // 'autoplay': 1 // REMOVED this line
+            // 'autoplay': 1 // Ensure this remains REMOVED/commented out
         },
         events: {
             'onReady': onPlayerReady,
@@ -413,40 +415,53 @@ function onPlayerReady(event) {
     const videoData = event.target.getVideoData();
     const readyVideoId = videoData ? videoData.video_id : null;
 
-    if (readyVideoId) {
-         console.log("Player ready for video:", readyVideoId, "- Attempting play with slight delay.");
-         // Ensure highlight and media session are correct for the video that just loaded
-         currentlyPlayingVideoId = readyVideoId;
-         updatePlayingVideoHighlight(readyVideoId);
-         const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-         if (currentPlaylist) {
-             const video = currentPlaylist.videos.find(v => v.id === readyVideoId);
-             if (video) {
-                 updateMediaSessionMetadata(video);
-             }
-         }
-         // Add a small delay before calling playVideo
-         setTimeout(() => {
-            // Check if the player still exists and is ready, as state might change during the delay
-            if (ytPlayer && isPlayerReady && typeof ytPlayer.playVideo === 'function') {
-                 try {
-                    console.log("Executing delayed playVideo() for:", readyVideoId);
-                    event.target.playVideo();
-                 } catch (e) {
-                     console.error("Error during delayed playVideo():", e);
-                     // Maybe handle error differently here if needed
-                 }
-            } else {
-                console.log("Player state changed or player destroyed during delay, aborting playVideo().");
-            }
-         }, 100); // Delay of 100 milliseconds
+    // --- Safety check ---
+    if (!readyVideoId) {
+        console.warn("Player ready but couldn't get video ID.");
+        // Optional: Could try loading lastRequestedVideoId if it exists?
+        // if (lastRequestedVideoId) { event.target.loadVideoById(lastRequestedVideoId); }
+        return; // Exit if we don't know which video is ready
+    }
+    // --- End Safety check ---
 
-    } else {
-         console.warn("Player ready but couldn't get video ID.");
+    console.log("Player is ready for video:", readyVideoId);
+
+    // Update UI based on the video that is *actually* ready in the player
+    // Note: currentlyPlayingVideoId might differ from lastRequestedVideoId if clicks were fast
+    currentlyPlayingVideoId = readyVideoId; // Update based on player reality
+    updatePlayingVideoHighlight(readyVideoId);
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    if (currentPlaylist) {
+        const video = currentPlaylist.videos.find(v => v.id === readyVideoId);
+        if (video) {
+            updateMediaSessionMetadata(video);
+            // onStateChange(PLAYING) will handle audioOnlyDisplay update
+        }
     }
 
-    // Clear any potentially stale queued ID
-    videoIdToPlayOnReady = null;
+    // --- Check if this ready video is the one the user last requested ---
+    if (readyVideoId === lastRequestedVideoId) {
+        console.log("Ready video matches last requested. Attempting play:", readyVideoId);
+        try {
+            // Play the video directly now that player is ready *and* it's the intended video
+            event.target.playVideo();
+        } catch (e) {
+            console.error("Error during onPlayerReady playVideo():", e);
+            // Consider error handling / closing player if play fails critically
+        }
+    } else if (lastRequestedVideoId) {
+        // Player became ready for a video, but it's NOT the last one requested.
+        // This likely means the user clicked another video while the first was loading.
+        // The playVideo call for the *new* video would have already called loadVideoById.
+        // No action needed here; the player will eventually load the correct video.
+        console.log(`Player ready for ${readyVideoId}, but last requested was ${lastRequestedVideoId}. Waiting for correct video load/state change.`);
+    } else {
+        // Player is ready, but we have no record of a recent request (e.g., page load with no auto-play)
+        console.log(`Player ready for ${readyVideoId}, but no lastRequestedVideoId is set.`);
+    }
+
+    // REMOVED: videoIdToPlayOnReady = null;
+    // REMOVED: setTimeout block for playing video.
 }
 
 function onPlayerStateChange(event) {
@@ -899,46 +914,44 @@ function playVideo(videoId) {
         console.error("playVideo called with no videoId");
         return;
     }
+    console.log("playVideo called for:", videoId);
 
+    // --- Record User Intent ---
+    lastRequestedVideoId = videoId; // Store the user's latest request
+
+    // --- Prepare UI Immediately ---
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     let videoData = null;
     if (currentPlaylist) {
         videoData = currentPlaylist.videos.find(v => v.id === videoId);
     }
 
-    // 1. Ensure API is ready
+    playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible
+    // Note: Setting currentlyPlayingVideoId here for immediate UI feedback.
+    // onReady/onStateChange will confirm the actual playing video later.
+    currentlyPlayingVideoId = videoId;
+    updatePlayingVideoHighlight(videoId);
+    applyAudioOnlyClass(); // Apply class based on current mode
+    updateAudioOnlyDisplay(videoData ? videoData.title : null); // Update display based on mode/data
+    updateMediaSessionMetadata(videoData || null); // Update media session early
+    // --- End UI Prep ---
+
+
+    // --- Check API Readiness ---
     if (!isYTApiReady) {
-        console.log("YT API not ready yet. Queuing video:", videoId);
-        videoIdToPlayOnReady = videoId; // Queue the video
-        showToast("Player is loading...", "info", 1500); // Inform user
-        // Preemptively show player wrapper
-        playerWrapperEl.classList.remove('hidden');
-        if (isAudioOnlyMode && videoData) {
-             updateAudioOnlyDisplay(videoData.title); // Show title early if possible
-        } else {
-             updateAudioOnlyDisplay(null); // Hide if not audio-only or no data yet
-        }
+        console.log("YT API not ready yet. Play request recorded for:", videoId);
+        showToast("Player is loading...", "info", 1500);
+        // No queueing variable needed; onYouTubeIframeAPIReady uses lastRequestedVideoId
         return;
     }
 
-    // 2. Show player UI
-    playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible always when playing
-    currentlyPlayingVideoId = videoId; // Track immediately
-    updatePlayingVideoHighlight(videoId);
-    applyAudioOnlyClass(); // Applies .audio-only-active to body if needed
-    updateAudioOnlyDisplay(videoData ? videoData.title : null); // Update display based on mode and data
-
-    // --- Media Session Update (do this early) ---
-    updateMediaSessionMetadata(videoData || null); // Update or clear
-    // --- End Media Session Update ---
-
-    // 3. Handle Player Instance
+    // --- Handle Player Instance ---
     if (ytPlayer) {
-        // Player exists, check readiness
+        // Player exists
         if (isPlayerReady) {
-            console.log("Player exists and is ready. Loading video:", videoId);
-            // Scroll into view if needed (only if NOT in audio-only mode)
-            if (!isAudioOnlyMode) {
+            // Player exists and is ready: Load and attempt to play immediately
+            console.log("Player exists and is ready. Loading and playing video:", videoId);
+            if (!isAudioOnlyMode) { // Scroll if not in audio-only mode
                setTimeout(() => {
                    if (playerWrapperEl.offsetParent !== null) {
                         playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -947,27 +960,32 @@ function playVideo(videoId) {
             }
             try {
                 ytPlayer.loadVideoById(videoId); // Load the new video
-                // Explicitly try to play it immediately after loading when player is ready.
-                // This reinforces the intent to play after the user's click.
+                // Attempt to play immediately since player is ready
                 ytPlayer.playVideo();
             } catch (error) {
-                console.error("Error calling loadVideoById or playVideo:", error); // Updated error log
-                showToast("Failed to load or play video.", "error"); // Updated toast message
+                console.error("Error calling loadVideoById or playVideo on ready player:", error);
+                showToast("Failed to load or play video.", "error");
                 handleClosePlayer();
             }
         } else {
-            // Player exists but is not ready
-            console.log("Player exists but not ready. Queuing video:", videoId);
-            videoIdToPlayOnReady = videoId; // Queue (onPlayerReady will handle)
-             // updateAudioOnlyDisplay is already handled above based on videoData
+            // Player exists but is not ready (still initializing)
+            console.log("Player exists but not ready. Loading video:", videoId, ". onReady will handle play.");
+            // Load the video; onReady will check lastRequestedVideoId and play if it matches.
+             try {
+                 // Only load if the video isn't already the one loading? Check needed?
+                 // YT API might handle redundant loads gracefully. Let's assume it does for now.
+                 ytPlayer.loadVideoById(videoId);
+             } catch (error) {
+                 console.error("Error calling loadVideoById while player not ready:", error);
+                 showToast("Error preparing video.", "error");
+                 handleClosePlayer(); // Close if loading fails critically
+             }
         }
     } else {
-        // Player does not exist, create it
+        // Player does not exist: Create it. onReady will handle play.
         console.log("Player does not exist. Creating player for video:", videoId);
         isPlayerReady = false; // Explicitly set to false until onReady fires
-        ytPlayer = createPlayer(videoId); // Create and load video
-        // onPlayerReady will handle the rest
-        // updateAudioOnlyDisplay is already handled above based on videoData
+        ytPlayer = createPlayer(videoId); // Create and load video. onReady will check lastRequestedVideoId.
     }
 }
 
@@ -1155,7 +1173,7 @@ function handleAudioOnlyToggle() {
         // If no video playing, ensure player wrapper is hidden if audio-only is disabled
         // and no video is selected to play next. Also clear audio display.
         updateAudioOnlyDisplay(null);
-         if (!isAudioOnlyMode && !videoIdToPlayOnReady) {
+         if (!isAudioOnlyMode && !lastRequestedVideoId) {
             playerWrapperEl.classList.add('hidden');
          }
     }
@@ -1312,8 +1330,11 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 function handleClosePlayer() {
-    stopVideo();
-    
+    stopVideo(); // stopVideo clears currentlyPlayingVideoId
+
+    // Clear the user's last explicit play request intent when player is closed
+    lastRequestedVideoId = null;
+
     if (ytPlayer && typeof ytPlayer.destroy === 'function') {
         try {
             console.log("Destroying YT Player instance.");
@@ -1330,17 +1351,18 @@ function handleClosePlayer() {
             }
         }
     } else {
+        // Ensure state is reset even if destroy wasn't needed/possible
         ytPlayer = null;
         isPlayerReady = false;
     }
-    
-    videoIdToPlayOnReady = null;
+
+    // videoIdToPlayOnReady = null; // REMOVED this line
     playerWrapperEl.classList.add('hidden');
     updatePlayingVideoHighlight(null);
     updateAudioOnlyDisplay(null);
-    
+
     if ('mediaSession' in navigator) {
-        updateMediaSessionMetadata(null);
+        updateMediaSessionMetadata(null); // Clear media session when player closes
     }
 }
 

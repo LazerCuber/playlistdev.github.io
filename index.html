@@ -20,6 +20,9 @@
     <link rel="preconnect" href="https://s.ytimg.com">
     <link rel="preconnect" href="https://www.google.com"> <!-- For initial API script fetch -->
 
+    <!-- Preload YouTube API Script -->
+    <link rel="preload" href="https://www.youtube.com/iframe_api" as="script">
+
     <!-- Stylesheets & Fonts -->
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap"
@@ -203,7 +206,7 @@
     <!-- Toast Notification Container -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <!-- YouTube IFrame Player API -->
+    <!-- YouTube IFrame Player API (KEEP THIS SCRIPT TAG HERE WITH DEFER) -->
     <script src="https://www.youtube.com/iframe_api" defer></script>
     <script src="script.js" defer></script>
 </body>
