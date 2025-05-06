@@ -586,46 +586,6 @@ function playNextVideo() {
     }
 }
 
-// Add this function after the playNextVideo function (around line 830)
-function playPreviousVideo() {
-    if (!ytPlayer || !currentPlaylistId) return;
-
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (!currentPlaylist || currentPlaylist.videos.length < 1) return;
-
-    if (!currentlyPlayingVideoId && currentPlaylist.videos.length > 0) {
-        console.log("playPreviousVideo called but no video was playing. Starting from first video.");
-        playVideo(currentPlaylist.videos[0].id);
-        return;
-    }
-    if (!currentlyPlayingVideoId || currentPlaylist.videos.length < 2) {
-        // If only one video, or no current video, stop? Or replay? For now, stop.
-        handleClosePlayer(); // Close player if we can't go back
-        return;
-    }
-
-    const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
-    if (currentIndex === -1) {
-        console.warn("Currently playing video not found in playlist during playPrevious. Playing first video.");
-        if (currentPlaylist.videos.length > 0) {
-            playVideo(currentPlaylist.videos[0].id);
-        } else {
-            handleClosePlayer(); // Close if playlist became empty
-        }
-        return;
-    }
-
-    const prevIndex = currentIndex === 0 ? currentPlaylist.videos.length - 1 : currentIndex - 1;
-    const prevVideo = currentPlaylist.videos[prevIndex];
-    if (prevVideo) {
-        console.log(`Playing previous video: ${prevVideo.title} (Index: ${prevIndex})`);
-        playVideo(prevVideo.id);
-    } else {
-        console.error(`Could not find previous video at index ${prevIndex}`);
-        handleClosePlayer(); // Close if previous video isn't found
-    }
-}
-
 // --- Local Storage & State ---
 function savePlaylists() { localStorage.setItem('playlists', JSON.stringify(playlists)); }
 function loadPlaylists() {
