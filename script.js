@@ -992,32 +992,32 @@ function renderVideos() {
     videoGridEl.innerHTML = ''; // Clear existing grid content
     const fragment = document.createDocumentFragment(); // Create a fragment
 
-    videosToRender.forEach(video => { // Iterate over the page's videos only
+    videosToRender.forEach(video => {
         const div = document.createElement('div');
         div.className = 'video-card';
         div.dataset.videoId = video.id;
         div.draggable = true;
         div.innerHTML = `
-                    <div class="video-card" data-video-id="${video.id}" draggable="true">
-                        <div class="thumbnail-wrapper">
-                           <img src="${escapeHTML(video.thumbnail)}" class="thumbnail" alt="" loading="lazy"> <!-- Alt can be empty as title is below -->
-                        </div>
-                        <div class="video-info">
-                             <h4>${escapeHTML(video.title)}</h4>
-                             <div class="video-controls">
-                                 <span class="drag-handle" title="Drag to reorder">
-                                    ${ICONS.drag}
-                                    <span class="visually-hidden">Drag to reorder ${escapeHTML(video.title)}</span>
-                                 </span>
-                                 <button class="icon-button delete-video-btn" title="Remove from playlist">
-                                    ${ICONS.delete}
-                                    <span class="visually-hidden">Remove ${escapeHTML(video.title)} from playlist</span>
-                                 </button>
-                             </div>
-                        </div>
-                    </div>
-                `;
-        fragment.appendChild(div.firstElementChild); // Append the actual card element from the innerHTML
+            <div class="video-card" data-video-id="${video.id}" draggable="true">
+                <div class="thumbnail-wrapper">
+                    <img src="${escapeHTML(video.thumbnail)}" class="thumbnail" alt="" loading="lazy">
+                </div>
+                <div class="video-info">
+                     <h4>${escapeHTML(video.title)}</h4>
+                     <div class="video-controls">
+                         <span class="drag-handle" title="Drag to reorder">
+                            ${ICONS.drag}
+                            <span class="visually-hidden">Drag to reorder ${escapeHTML(video.title)}</span>
+                         </span>
+                         <button class="icon-button delete-video-btn" title="Remove from playlist">
+                            ${ICONS.delete}
+                            <span class="visually-hidden">Remove ${escapeHTML(video.title)} from playlist</span>
+                         </button>
+                     </div>
+                </div>
+            </div>
+        `;
+        fragment.appendChild(div.firstElementChild);
     });
 
     videoGridEl.appendChild(fragment); // Append the fragment to the DOM once
@@ -1175,20 +1175,10 @@ function handleImportPlaylists(event) {
 }
 
 function handleVisualSwitchClick(event) {
-    // Find the parent switch element that was clicked
     const switchElement = event.target.closest('.switch');
-    if (!switchElement) return; // Exit if click wasn't within a switch
-
-    // Find the actual checkbox input within this specific switch
+    if (!switchElement) return;
     const checkbox = switchElement.querySelector('input[type="checkbox"]');
-    if (!checkbox) return; // Exit if no checkbox found
-
-    // We only want to react if the click wasn't directly on the hidden input itself.
-    // This ensures clicking the visual parts (slider/background) triggers the toggle.
-    if (event.target !== checkbox) {
-        // Programmatically click the associated hidden checkbox.
-        // This will toggle its 'checked' state AND trigger the 'change' event listener
-        // (e.g., handleAutoplayToggle or handleAudioOnlyToggle).
+    if (checkbox && event.target !== checkbox) {
         checkbox.click();
     }
 }
@@ -1315,7 +1305,7 @@ function debounce(func, wait) {
 // --- Media Session API Integration ---
 
 function updateMediaSessionMetadata(video) {
-    if (!('mediaSession' in navigator)) return;
+    if (!('mediaSession' in navigator) || !video) return;
 
     try {
         navigator.mediaSession.metadata = new MediaMetadata({
@@ -1395,28 +1385,18 @@ function handlePlaylistDragEnd(event) {
 }
 
 function handlePlaylistDragOver(event) {
-    event.preventDefault(); // Allow drop
+    event.preventDefault();
     if (!draggedPlaylistId) return;
     event.dataTransfer.dropEffect = 'move';
 
     const targetItem = event.target.closest('.playlist-item');
-    let currentTarget = null;
-
     if (targetItem && targetItem.draggable && parseInt(targetItem.dataset.id) !== draggedPlaylistId) {
-         currentTarget = targetItem;
+        clearPlaylistDragOverStyles();
+        targetItem.classList.add('drag-over');
+        dragTargetPlaylistElement = targetItem;
+    } else {
+        event.dataTransfer.dropEffect = 'none';
     }
-
-    if (currentTarget !== dragTargetPlaylistElement) {
-        clearPlaylistDragOverStyles(); // Clear previous target
-        if (currentTarget) {
-            currentTarget.classList.add('drag-over'); // Highlight new target
-        }
-        dragTargetPlaylistElement = currentTarget; // Track new target
-    }
-
-     if (!currentTarget) {
-         event.dataTransfer.dropEffect = 'none'; // Cannot drop here
-     }
 }
 
 function handlePlaylistDragLeave(event) {
@@ -1429,15 +1409,13 @@ function handlePlaylistDragLeave(event) {
 
 function handlePlaylistDrop(event) {
     event.preventDefault();
-    const dropTargetId = dragTargetPlaylistElement ? parseInt(dragTargetPlaylistElement.dataset.id) : null;
-
-    clearPlaylistDragOverStyles(); // Always clear styles
-
-    if (draggedPlaylistId && dropTargetId && dropTargetId !== draggedPlaylistId) {
-        handleReorderPlaylist(draggedPlaylistId, dropTargetId);
+    if (draggedPlaylistId && dragTargetPlaylistElement) {
+        const dropTargetId = parseInt(dragTargetPlaylistElement.dataset.id);
+        if (dropTargetId !== draggedPlaylistId) {
+            handleReorderPlaylist(draggedPlaylistId, dropTargetId);
+        }
     }
-
-    // Resetting state happens in handlePlaylistDragEnd
+    clearPlaylistDragOverStyles();
 }
 
 function clearPlaylistDragOverStyles() {
@@ -1513,88 +1491,43 @@ function handleTouchStart(event) {
 
 function handleTouchMove(event) {
     if (isTouchDragging) {
-        // --- Handle Drag Movement ---
         if (!touchDraggedElement) return;
-
-        // Prevent scrolling while dragging
         event.preventDefault();
 
         const touch = event.touches[0];
         const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
         const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card') : null;
 
-        let currentTarget = null;
-        // Check if we are over a different draggable card
         if (targetCard && targetCard.draggable && targetCard !== touchDraggedElement) {
-            currentTarget = targetCard;
-        }
-
-        // Update highlight based on the current target
-        if (currentTarget !== dragTargetElement) {
             if (dragTargetElement) dragTargetElement.classList.remove('drag-over');
-            if (currentTarget) currentTarget.classList.add('drag-over');
-            dragTargetElement = currentTarget;
-            // console.log("Touch Move - Drag Over:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
+            targetCard.classList.add('drag-over');
+            dragTargetElement = targetCard;
         }
-    } else if (potentialPlayVideoId) {
-        // --- Handle Scroll During Potential Play ---
-        // If touch moves significantly while a play was potential, cancel the play.
-        // We can use a small threshold, but for simplicity now, any move cancels.
-        // console.log("Touch Move - Canceling Potential Play:", potentialPlayVideoId);
-        if (potentialPlayCard) {
-            potentialPlayCard.classList.remove('touch-active');
-        }
+    } else if (potentialPlayVideoId && potentialPlayCard) {
+        potentialPlayCard.classList.remove('touch-active');
         potentialPlayVideoId = null;
         potentialPlayCard = null;
-        // Do NOT preventDefault here, allow the scroll to happen.
     }
 }
 
-
 function handleTouchEnd(event) {
-    // Check if a drag operation was active
     if (isTouchDragging) {
-        // --- Handle Drop ---
-        // console.log("Touch End - Drag Drop:", draggedVideoId, "Target:", dragTargetElement ? dragTargetElement.dataset.videoId : 'None');
-
-        // Check if we ended on a valid drop target during a drag
         if (draggedVideoId && dragTargetElement && dragTargetElement.dataset.videoId !== draggedVideoId) {
             handleReorderVideo(draggedVideoId, dragTargetElement.dataset.videoId);
         }
-
-        // Cleanup drag classes
-        if (touchDraggedElement) {
-             touchDraggedElement.classList.remove('dragging');
-        }
-        clearDragOverStyles(); // This clears .drag-over from dragTargetElement
-
-        // Reset all touch drag state variables
+        if (touchDraggedElement) touchDraggedElement.classList.remove('dragging');
+        clearDragOverStyles();
         isTouchDragging = false;
         touchDraggedElement = null;
         draggedVideoId = null;
         dragTargetElement = null;
         touchDragStartY = 0;
-
     } else if (potentialPlayVideoId && potentialPlayCard) {
-        // --- Handle Tap to Play ---
-        // If drag wasn't active AND a potential play video is still set, trigger play.
-        // This means touchstart and touchend happened without a significant touchmove in between.
-        // console.log("Touch End - Executing Play:", potentialPlayVideoId);
         playVideo(potentialPlayVideoId);
-        potentialPlayCard.classList.remove('touch-active'); // Remove feedback style
-    } else {
-        // --- Handle Other Touch Ends (e.g., after scroll) ---
-        // console.log("Touch End - No action (likely scroll or tap outside play area)");
-        // Just ensure any lingering active class is removed if needed
-        if (potentialPlayCard) { // Check potentialPlayCard as it might have been cleared by move
-           potentialPlayCard.classList.remove('touch-active');
-        } else { // Or find any card with the class (less efficient but safer)
-            const activeCard = videoGridEl.querySelector('.video-card.touch-active');
-            if (activeCard) activeCard.classList.remove('touch-active');
-        }
+        potentialPlayCard.classList.remove('touch-active');
+    } else if (potentialPlayCard) {
+        potentialPlayCard.classList.remove('touch-active');
     }
-
-    // Always reset potential play state at the end of any touch interaction
     potentialPlayVideoId = null;
     potentialPlayCard = null;
 }
