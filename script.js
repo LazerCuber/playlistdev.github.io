@@ -79,8 +79,13 @@ function init() {
     loadSidebarWidth();
     renderPlaylists();
 
-    // Load YouTube Player API immediately
-    loadYouTubePlayerAPI();
+    // Pre-load YouTube Player API immediately
+    loadYouTubePlayerAPI().then(() => {
+        // Pre-initialize the player to avoid delays on first click
+        if (!ytPlayer && isYTApiReady) {
+            ytPlayer = createPlayer(null); // Initialize without a video
+        }
+    });
 
     const lastSelectedId = localStorage.getItem('lastSelectedPlaylistId');
     if (lastSelectedId && playlists.some(p => p.id === parseInt(lastSelectedId))) {
@@ -372,12 +377,12 @@ function createPlayer(videoId) {
     return new YT.Player('player', {
         height: '100%',
         width: '100%',
-        videoId: videoId,
+        videoId: videoId || undefined, // Allow null for pre-initialization
         playerVars: {
             'playsinline': 1,
             'rel': 0,
             'enablejsapi': 1,
-            'autoplay': 1,
+            'autoplay': videoId ? 1 : 0, // Only autoplay if videoId is provided
         },
         events: {
             'onReady': onPlayerReady,
@@ -883,7 +888,7 @@ async function playVideo(videoId) {
     updateAudioOnlyDisplay(videoData?.title || null);
 
     try {
-        // Wait for API to be ready
+        // Ensure API is ready
         if (!isYTApiReady) {
             await loadYouTubePlayerAPI();
         }
@@ -1338,11 +1343,10 @@ function updateMediaSessionMetadata(video) {
                 { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' },
             ]
         });
+        setupMediaSessionActionHandlers(); // Ensure handlers are set
     } catch (error) {
-         console.error("Error setting Media Session metadata:", error);
+        console.error("Error setting Media Session metadata:", error);
     }
-
-    setupMediaSessionActionHandlers();
 }
 
 function setupMediaSessionActionHandlers() {
