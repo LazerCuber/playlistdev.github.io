@@ -875,7 +875,7 @@ async function playVideo(videoId) {
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
 
-    // Update UI and Media Session immediately
+    // Update UI immediately
     playerWrapperEl.classList.remove('hidden');
     currentlyPlayingVideoId = videoId;
     updatePlayingVideoHighlight(videoId);
@@ -893,7 +893,7 @@ async function playVideo(videoId) {
             ytPlayer = createPlayer(videoId);
         } else if (isPlayerReady) {
             ytPlayer.loadVideoById(videoId);
-            ytPlayer.playVideo(); // Explicitly call playVideo for mobile devices
+            ytPlayer.playVideo();
         } else {
             videoIdToPlayOnReady = videoId;
         }
@@ -1338,12 +1338,11 @@ function updateMediaSessionMetadata(video) {
                 { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' },
             ]
         });
-
-        // Ensure action handlers are set immediately
-        setupMediaSessionActionHandlers();
     } catch (error) {
-        console.error("Error setting Media Session metadata:", error);
+         console.error("Error setting Media Session metadata:", error);
     }
+
+    setupMediaSessionActionHandlers();
 }
 
 function setupMediaSessionActionHandlers() {
