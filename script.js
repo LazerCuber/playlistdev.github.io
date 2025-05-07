@@ -97,29 +97,18 @@ function init() {
 
 // --- YouTube Player API ---
 let ytApiLoadPromise = null;
-let ytApiLoadTimeout = null;
 
 function loadYouTubePlayerAPI() {
-    if (ytApiLoadPromise) return ytApiLoadPromise;
+    if (ytApiLoadPromise) return ytApiLoadPromise; // Return existing promise if already loading
 
-    ytApiLoadPromise = new Promise((resolve, reject) => {
-        // Fallback timeout (5 seconds)
-        ytApiLoadTimeout = setTimeout(() => {
-            if (!isYTApiReady) {
-                console.error("YouTube API failed to load within 5 seconds");
-                reject(new Error("YouTube API load timeout"));
-            }
-        }, 5000);
-
+    ytApiLoadPromise = new Promise((resolve) => {
         const tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
-        tag.onerror = () => reject(new Error("Failed to load YouTube API script"));
-        
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
+        // Ensure the global callback is set
         window.onYouTubeIframeAPIReady = () => {
-            clearTimeout(ytApiLoadTimeout);
             isYTApiReady = true;
             resolve();
         };
@@ -260,15 +249,6 @@ function setupEventListeners() {
     playlistListEl.addEventListener('dragover', handlePlaylistDragOver);
     playlistListEl.addEventListener('dragleave', handlePlaylistDragLeave);
     playlistListEl.addEventListener('drop', handlePlaylistDrop);
-
-    // Mobile: Handle touch events for better playback
-    videoGridEl.addEventListener('touchend', (e) => {
-        const videoCard = e.target.closest('.video-card');
-        if (videoCard) {
-            e.preventDefault(); // Prevent double-tap zoom
-            playVideo(videoCard.dataset.videoId);
-        }
-    }, { passive: false });
 }
 
 // --- Drag and Drop (Videos) ---
@@ -889,13 +869,13 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
     renderVideos();
 }
 
-async function playVideo(videoId, retryCount = 0) {
+async function playVideo(videoId) {
     if (!videoId) return;
 
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
 
-    // Immediate UI feedback
+    // Update UI immediately
     playerWrapperEl.classList.remove('hidden');
     currentlyPlayingVideoId = videoId;
     updatePlayingVideoHighlight(videoId);
@@ -903,37 +883,23 @@ async function playVideo(videoId, retryCount = 0) {
     updateAudioOnlyDisplay(videoData?.title || null);
 
     try {
-        // 1. Ensure API is ready (with retry)
+        // Wait for API to be ready
         if (!isYTApiReady) {
-            await loadYouTubePlayerAPI().catch(async (error) => {
-                if (retryCount < 2) {
-                    console.warn(`Retrying API load (attempt ${retryCount + 1})`);
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    return playVideo(videoId, retryCount + 1);
-                }
-                throw error;
-            });
+            await loadYouTubePlayerAPI();
         }
 
-        // 2. Initialize or reuse player
+        // Initialize or reuse player
         if (!ytPlayer) {
             ytPlayer = createPlayer(videoId);
         } else if (isPlayerReady) {
-            // Mobile workaround: Ensure autoplay is allowed
-            const playPromise = ytPlayer.playVideo();
-            if (playPromise !== undefined) {
-                playPromise.catch(() => {
-                    // Autoplay blocked? Show a "Tap to Play" button
-                    showToast("Tap to play", "info", 2000);
-                    playerWrapperEl.onclick = () => ytPlayer.playVideo();
-                });
-            }
+            ytPlayer.loadVideoById(videoId);
+            ytPlayer.playVideo();
         } else {
             videoIdToPlayOnReady = videoId;
         }
     } catch (error) {
-        console.error("Playback failed:", error);
-        showToast("Failed to play. Try again.", "error");
+        console.error("Playback error:", error);
+        showToast("Failed to play video. Please try again.", "error");
         handleClosePlayer();
     }
 }
