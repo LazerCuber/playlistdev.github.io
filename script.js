@@ -79,7 +79,7 @@ function init() {
     loadSidebarWidth();
     renderPlaylists();
 
-    // Load YouTube Player API immediately
+    // Preload YouTube Player API immediately
     loadYouTubePlayerAPI();
 
     const lastSelectedId = localStorage.getItem('lastSelectedPlaylistId');
@@ -875,31 +875,29 @@ async function playVideo(videoId) {
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
 
-    // Update UI immediately
+    // Update UI and lock screen controls immediately
     playerWrapperEl.classList.remove('hidden');
     currentlyPlayingVideoId = videoId;
     updatePlayingVideoHighlight(videoId);
-    updateMediaSessionMetadata(videoData || null);
-    updateAudioOnlyDisplay(videoData?.title || null);
+    
+    // Critical: Set metadata BEFORE playback starts
+    if (videoData) {
+        updateMediaSessionMetadata(videoData);
+        updateAudioOnlyDisplay(videoData.title);
+    }
 
     try {
-        // Wait for API to be ready
-        if (!isYTApiReady) {
-            await loadYouTubePlayerAPI();
-        }
+        if (!isYTApiReady) await loadYouTubePlayerAPI();
 
-        // Initialize or reuse player
         if (!ytPlayer) {
             ytPlayer = createPlayer(videoId);
-        } else if (isPlayerReady) {
-            ytPlayer.loadVideoById(videoId);
-            ytPlayer.playVideo();
         } else {
-            videoIdToPlayOnReady = videoId;
+            ytPlayer.loadVideoById(videoId);
+            ytPlayer.playVideo(); // iOS requires this to be called synchronously after user interaction
         }
     } catch (error) {
         console.error("Playback error:", error);
-        showToast("Failed to play video. Please try again.", "error");
+        showToast("Failed to play video", "error");
         handleClosePlayer();
     }
 }
@@ -1319,64 +1317,49 @@ function debounce(func, wait) {
 function updateMediaSessionMetadata(video) {
     if (!('mediaSession' in navigator)) return;
 
-    if (!video) {
-        navigator.mediaSession.metadata = null;
-        return;
-    }
-
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    const playlistName = currentPlaylist ? currentPlaylist.name : 'Playlist';
-    const safeTitle = video.title || 'Untitled Video';
-
     try {
         navigator.mediaSession.metadata = new MediaMetadata({
-            title: safeTitle,
+            title: video.title || 'Untitled Video',
             artist: 'YouTube',
-            album: playlistName,
+            album: playlists.find(p => p.id === currentPlaylistId)?.name || 'Playlist',
             artwork: [
                 { src: video.thumbnail.replace('mqdefault', 'hqdefault'), sizes: '480x360', type: 'image/jpeg' },
-                { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' },
+                { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' }
             ]
         });
-    } catch (error) {
-         console.error("Error setting Media Session metadata:", error);
-    }
 
-    setupMediaSessionActionHandlers();
+        // Must set handlers AFTER metadata
+        setupMediaSessionActionHandlers();
+    } catch (error) {
+        console.error("MediaSession error:", error);
+    }
 }
 
 function setupMediaSessionActionHandlers() {
-     if (!('mediaSession' in navigator)) return;
+    if (!('mediaSession' in navigator)) return;
 
-    navigator.mediaSession.setActionHandler('play', () => {
-        if (ytPlayer && isPlayerReady && typeof ytPlayer.playVideo === 'function') {
-            ytPlayer.playVideo();
-        } else if (currentlyPlayingVideoId) {
-            playVideo(currentlyPlayingVideoId);
-        }
-    });
+    try {
+        navigator.mediaSession.setActionHandler('play', () => {
+            ytPlayer?.playVideo?.();
+        });
 
-    navigator.mediaSession.setActionHandler('pause', () => {
-        if (ytPlayer && isPlayerReady && typeof ytPlayer.pauseVideo === 'function') {
-            ytPlayer.pauseVideo();
-        }
-    });
+        navigator.mediaSession.setActionHandler('pause', () => {
+            ytPlayer?.pauseVideo?.();
+        });
 
-    navigator.mediaSession.setActionHandler('stop', () => {
-        handleClosePlayer();
-    });
+        // Include all standard handlers
+        const handlers = {
+            'previoustrack': playPreviousVideo,
+            'nexttrack': () => isAutoplayEnabled && playNextVideo(),
+            'stop': handleClosePlayer
+        };
 
-    navigator.mediaSession.setActionHandler('previoustrack', () => {
-        playPreviousVideo();
-    });
-
-    navigator.mediaSession.setActionHandler('nexttrack', () => {
-         if(isAutoplayEnabled) {
-            playNextVideo();
-         } else {
-             showToast("Autoplay is disabled.", "info", 1500);
-         }
-    });
+        Object.entries(handlers).forEach(([action, handler]) => {
+            navigator.mediaSession.setActionHandler(action, handler);
+        });
+    } catch (error) {
+        console.error("Failed to set media action handlers:", error);
+    }
 }
 
 // --- End Media Session API Integration ---
