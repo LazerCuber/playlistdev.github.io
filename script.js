@@ -79,13 +79,8 @@ function init() {
     loadSidebarWidth();
     renderPlaylists();
 
-    // Preload YouTube Player API immediately
-    loadYouTubePlayerAPI().then(() => {
-        // Pre-create a player instance to avoid delays on first click
-        if (!ytPlayer) {
-            ytPlayer = createPlayer(''); // Initialize with no video
-        }
-    });
+    // Load YouTube Player API immediately
+    loadYouTubePlayerAPI();
 
     const lastSelectedId = localStorage.getItem('lastSelectedPlaylistId');
     if (lastSelectedId && playlists.some(p => p.id === parseInt(lastSelectedId))) {
@@ -888,12 +883,12 @@ async function playVideo(videoId) {
     updateAudioOnlyDisplay(videoData?.title || null);
 
     try {
-        // Ensure API is ready
+        // Wait for API to be ready
         if (!isYTApiReady) {
             await loadYouTubePlayerAPI();
         }
 
-        // Reuse or create player
+        // Initialize or reuse player
         if (!ytPlayer) {
             ytPlayer = createPlayer(videoId);
         } else if (isPlayerReady) {
@@ -1343,10 +1338,11 @@ function updateMediaSessionMetadata(video) {
                 { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' },
             ]
         });
-        setupMediaSessionActionHandlers();
     } catch (error) {
-        console.error("Error setting Media Session metadata:", error);
+         console.error("Error setting Media Session metadata:", error);
     }
+
+    setupMediaSessionActionHandlers();
 }
 
 function setupMediaSessionActionHandlers() {
