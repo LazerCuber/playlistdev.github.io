@@ -55,6 +55,7 @@ let potentialPlayCard = null;
 const videosPerPage = 20;
 let currentPage = 1;
 let isYTApiReady = false;
+let userGesture = false;
 
 // --- Icons ---
 const ICONS = {
@@ -93,25 +94,36 @@ function init() {
 
     setupEventListeners();
     updateThemeIcon();
+
+    document.addEventListener('click', () => { userGesture = true; }, { once: true });
 }
 
 // --- YouTube Player API ---
 let ytApiLoadPromise = null;
 
 function loadYouTubePlayerAPI() {
-    if (ytApiLoadPromise) return ytApiLoadPromise; // Return existing promise if already loading
+    if (ytApiLoadPromise) return ytApiLoadPromise;
 
-    ytApiLoadPromise = new Promise((resolve) => {
+    ytApiLoadPromise = new Promise((resolve, reject) => {
         const tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-        // Ensure the global callback is set
+        // Timeout after 10 seconds
+        const timeoutId = setTimeout(() => {
+            reject(new Error('YouTube API failed to load.'));
+        }, 10000);
+
         window.onYouTubeIframeAPIReady = () => {
+            clearTimeout(timeoutId);
             isYTApiReady = true;
             resolve();
         };
+    }).catch(error => {
+        console.error("YouTube API load error:", error);
+        showToast('Failed to load YouTube player. Please refresh.', 'error');
+        throw error; // Allow retries
     });
 
     return ytApiLoadPromise;
@@ -165,10 +177,8 @@ function stopSidebarResize() {
 
 // --- Event Listeners ---
 function setupEventListeners() {
-    createPlaylistBtn.addEventListener('click', handleCreatePlaylist);
-    playlistNameInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleCreatePlaylist(); });
-    addVideoBtn.addEventListener('click', handleAddVideo);
-    videoUrlInput.addEventListener('keypress', (e) => { if (e.key === 'Enter' && !addVideoBtn.disabled) handleAddVideo(); });
+    setupInputListeners(playlistNameInput, createPlaylistBtn, handleCreatePlaylist);
+    setupInputListeners(videoUrlInput, addVideoBtn, handleAddVideo);
     videoUrlInput.addEventListener('input', () => { addVideoBtn.disabled = videoUrlInput.value.trim() === ''; });
     autoplayToggle.addEventListener('change', handleAutoplayToggle);
     audioOnlyToggle.addEventListener('change', handleAudioOnlyToggle);
@@ -369,7 +379,7 @@ function onYouTubeIframeAPIReady() {
 }
 
 function createPlayer(videoId) {
-    return new YT.Player('player', {
+    const player = new YT.Player('player', {
         height: '100%',
         width: '100%',
         videoId: videoId,
@@ -385,6 +395,12 @@ function createPlayer(videoId) {
             'onError': onPlayerError
         }
     });
+    // Hack for iOS
+    const iframe = document.getElementById('player');
+    if (isIOS() && iframe) {
+        iframe.setAttribute('webkit-playsinline', 'true');
+    }
+    return player;
 }
 
 function onPlayerReady(event) {
@@ -403,6 +419,14 @@ function onPlayerReady(event) {
 }
 
 function onPlayerStateChange(event) {
+    if (event.data === YT.PlayerState.PLAYING) {
+        const videoId = getCurrentPlayingVideoIdFromApi();
+        if (videoId) {
+            const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+            const video = currentPlaylist?.videos.find(v => v.id === videoId);
+            if (video) updateMediaSessionMetadata(video); // Force update
+        }
+    }
     if (!ytPlayer) return;
 
     let videoData = null;
@@ -813,7 +837,7 @@ async function handleAddVideo() {
         addVideoBtn.disabled = videoUrlInput.value.trim() === '';
         addVideoBtn.innerHTML = ICONS.add + ' Add Video';
         videoUrlInput.disabled = false;
-        videoUrlInput.focus();
+        addVideoBtn.focus();
     }
 }
 
@@ -824,27 +848,9 @@ function handleDeleteVideo(videoId) {
     const videoIndex = currentPlaylist.videos.findIndex(v => v.id === videoId);
     if (videoIndex === -1) return;
 
-    const videoTitle = currentPlaylist.videos[videoIndex].title;
-
-    if (videoId === currentlyPlayingVideoId) {
-        stopVideo();
-        playerWrapperEl.classList.add('hidden');
-        handleClosePlayer();
-    }
-
     currentPlaylist.videos.splice(videoIndex, 1);
-
-    const totalPages = Math.ceil(currentPlaylist.videos.length / videosPerPage);
-    if (currentPage > totalPages && totalPages > 0) {
-        currentPage = totalPages;
-    } else if (currentPlaylist.videos.length === 0) {
-        currentPage = 1;
-    }
-
-    savePlaylists();
+    savePlaylists(); // Only called if a video is actually deleted
     renderVideos();
-    renderPlaylists();
-    showToast(`Removed "${escapeHTML(videoTitle)}".`, 'info');
 }
 
 function handleReorderVideo(videoIdToMove, targetVideoId) {
@@ -872,32 +878,47 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
 async function playVideo(videoId) {
     if (!videoId) return;
 
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
-
-    // Update UI and lock screen controls immediately
-    playerWrapperEl.classList.remove('hidden');
-    currentlyPlayingVideoId = videoId;
-    updatePlayingVideoHighlight(videoId);
-    
-    // Critical: Set metadata BEFORE playback starts
-    if (videoData) {
-        updateMediaSessionMetadata(videoData);
-        updateAudioOnlyDisplay(videoData.title);
-    }
-
     try {
-        if (!isYTApiReady) await loadYouTubePlayerAPI();
+        if (!isYTApiReady) {
+            await loadYouTubePlayerAPI(); // Wait for API
+        }
+
+        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+        const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
+
+        // Update UI immediately
+        playerWrapperEl.classList.remove('hidden');
+        currentlyPlayingVideoId = videoId;
+        updatePlayingVideoHighlight(videoId);
+        
+        // Update audio-only display immediately if in audio-only mode
+        if (isAudioOnlyMode && videoData) {
+            updateAudioOnlyDisplay(videoData.title);
+        } else {
+            updateAudioOnlyDisplay(null);
+        }
+
+        if (videoData) updateMediaSessionMetadata(videoData);
 
         if (!ytPlayer) {
             ytPlayer = createPlayer(videoId);
         } else {
             ytPlayer.loadVideoById(videoId);
-            ytPlayer.playVideo(); // iOS requires this to be called synchronously after user interaction
+            // Autoplay only if triggered by user gesture (e.g., click)
+            try {
+                if (userGesture) {
+                    ytPlayer.playVideo();
+                } else {
+                    showToast('Click the play button to start the video.', 'info');
+                }
+            } catch (error) {
+                console.error("Autoplay blocked:", error);
+                showToast('Click the play button to start the video.', 'info');
+            }
         }
     } catch (error) {
         console.error("Playback error:", error);
-        showToast("Failed to play video", "error");
+        showToast("Failed to play video.", "error");
         handleClosePlayer();
     }
 }
@@ -1269,20 +1290,13 @@ function handleClosePlayer() {
 }
 
 function renderPaginationControls(totalVideos, totalPages) {
-    // const currentPlaylist = playlists.find(p => p.id === currentPlaylistId); // Data already available
-    // if (!currentPlaylist || currentPlaylist.videos.length <= videosPerPage) {
-    if (totalVideos <= videosPerPage) { // Simpler check based on passed data
-        // Hide controls if not needed (single page or empty)
+    if (totalVideos <= videosPerPage) {
         paginationControlsEl.classList.add('hidden');
         return;
     }
 
-    paginationControlsEl.classList.remove('hidden'); // Show controls
-    // const totalVideos = currentPlaylist.videos.length; // Passed as argument
-    // const totalPages = Math.ceil(totalVideos / videosPerPage); // Passed as argument
-
+    paginationControlsEl.classList.remove('hidden');
     pageInfoEl.textContent = `Page ${currentPage} of ${totalPages}`;
-
     prevPageBtn.disabled = currentPage === 1;
     nextPageBtn.disabled = currentPage === totalPages;
 }
@@ -1305,16 +1319,16 @@ function debounce(func, wait) {
 // --- Media Session API Integration ---
 
 function updateMediaSessionMetadata(video) {
-    if (!('mediaSession' in navigator) || !video) return;
+    if (!userGesture || !('mediaSession' in navigator) || currentlyPlayingVideoId === video?.id) return;
 
     try {
         navigator.mediaSession.metadata = new MediaMetadata({
-            title: video.title || 'Untitled Video',
+            title: video?.title || 'Untitled Video',
             artist: 'YouTube',
             album: playlists.find(p => p.id === currentPlaylistId)?.name || 'Playlist',
             artwork: [
-                { src: video.thumbnail.replace('mqdefault', 'hqdefault'), sizes: '480x360', type: 'image/jpeg' },
-                { src: video.thumbnail, sizes: '320x180', type: 'image/jpeg' }
+                { src: video?.thumbnail?.replace('mqdefault', 'hqdefault') || '', sizes: '480x360', type: 'image/jpeg' },
+                { src: video?.thumbnail || '', sizes: '320x180', type: 'image/jpeg' }
             ]
         });
 
@@ -1547,4 +1561,34 @@ function updateAudioOnlyDisplay(videoTitle) {
         audioOnlyTitleEl.textContent = '';
         audioOnlyInfoEl.classList.add('hidden');
     }
+}
+
+// Combine similar functions
+function updateVideoUI(videoId) {
+    updatePlayingVideoHighlight(videoId);
+    if (videoId) {
+        const video = getCurrentVideo(videoId);
+        updateMediaSessionMetadata(video);
+        updateAudioOnlyDisplay(video?.title);
+    } else {
+        updateAudioOnlyDisplay(null);
+        updateMediaSessionMetadata(null);
+    }
+}
+
+// Replace redundant keypress and click handlers with a single function
+function setupInputListeners(input, button, handler) {
+    input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') handler();
+    });
+    button.addEventListener('click', handler);
+}
+
+// Usage:
+setupInputListeners(playlistNameInput, createPlaylistBtn, handleCreatePlaylist);
+setupInputListeners(videoUrlInput, addVideoBtn, handleAddVideo);
+
+// Add the isIOS function
+function isIOS() {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
