@@ -419,14 +419,6 @@ function onPlayerReady(event) {
 }
 
 function onPlayerStateChange(event) {
-    if (event.data === YT.PlayerState.PLAYING) {
-        const videoId = getCurrentPlayingVideoIdFromApi();
-        if (videoId) {
-            const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-            const video = currentPlaylist?.videos.find(v => v.id === videoId);
-            if (video) updateMediaSessionMetadata(video); // Force update
-        }
-    }
     if (!ytPlayer) return;
 
     let videoData = null;
@@ -442,35 +434,14 @@ function onPlayerStateChange(event) {
         currentlyPlayingVideoId = videoIdFromEvent;
     }
 
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    const video = currentPlaylist?.videos.find(v => v.id === currentlyPlayingVideoId);
+
     if (event.data === YT.PlayerState.PLAYING) {
-        if (currentlyPlayingVideoId) {
-            updatePlayingVideoHighlight(currentlyPlayingVideoId);
-            const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-            if (currentPlaylist) {
-                const video = currentPlaylist.videos.find(v => v.id === currentlyPlayingVideoId);
-                if (video) {
-                    updateMediaSessionMetadata(video);
-                    updateAudioOnlyDisplay(video.title);
-                } else {
-                    updateAudioOnlyDisplay(null);
-                    updateMediaSessionMetadata(null);
-                }
-            } else {
-                updateAudioOnlyDisplay(null);
-                updateMediaSessionMetadata(null);
-            }
-        } else {
-            const freshVideoData = event.target.getVideoData();
-            const freshVideoId = freshVideoData ? freshVideoData.video_id : null;
-            if (freshVideoId) {
-                currentlyPlayingVideoId = freshVideoId;
-                updatePlayingVideoHighlight(freshVideoId);
-            } else {
-                updatePlayingVideoHighlight(null);
-                updateAudioOnlyDisplay(null);
-                updateMediaSessionMetadata(null);
-            }
-        }
+        updatePlayingVideoHighlight(currentlyPlayingVideoId);
+        updateAudioOnlyDisplay(video?.title);
+        updateMediaSessionMetadata(video);
+
         if ('mediaSession' in navigator) {
             navigator.mediaSession.playbackState = "playing";
         }
@@ -483,26 +454,25 @@ function onPlayerStateChange(event) {
             navigator.mediaSession.playbackState = "none";
         }
         if (isAutoplayEnabled) {
-             playNextVideo();
+            playNextVideo();
         } else {
             updatePlayingVideoHighlight(null);
             updateAudioOnlyDisplay(null);
             updateMediaSessionMetadata(null);
         }
-    } else if (event.data === YT.PlayerState.BUFFERING) {
-         // No explicit state change needed for buffering for media session
     } else if (event.data === YT.PlayerState.CUED) {
-         if ('mediaSession' in navigator) {
+        updateMediaSessionMetadata(video);
+        if ('mediaSession' in navigator) {
             if (navigator.mediaSession.playbackState !== 'playing' && navigator.mediaSession.playbackState !== 'paused') {
-                 navigator.mediaSession.playbackState = "paused";
+                navigator.mediaSession.playbackState = "paused";
             }
-         }
+        }
     } else if (event.data === YT.PlayerState.UNSTARTED) {
-         if ('mediaSession' in navigator) {
-             if (navigator.mediaSession.playbackState !== 'playing' && navigator.mediaSession.playbackState !== 'paused') {
-                 navigator.mediaSession.playbackState = "none";
-             }
-         }
+        if ('mediaSession' in navigator) {
+            if (navigator.mediaSession.playbackState !== 'playing' && navigator.mediaSession.playbackState !== 'paused') {
+                navigator.mediaSession.playbackState = "none";
+            }
+        }
     }
 }
 
@@ -883,36 +853,31 @@ async function playVideo(videoId) {
             await loadYouTubePlayerAPI(); // Wait for API
         }
 
-        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-        const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
-
         // Update UI immediately
         playerWrapperEl.classList.remove('hidden');
-        currentlyPlayingVideoId = videoId;
         updatePlayingVideoHighlight(videoId);
-        
+
         // Update audio-only display immediately if in audio-only mode
+        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+        const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
         if (isAudioOnlyMode && videoData) {
             updateAudioOnlyDisplay(videoData.title);
         } else {
             updateAudioOnlyDisplay(null);
         }
 
-        if (videoData) updateMediaSessionMetadata(videoData);
-
         if (!ytPlayer) {
             ytPlayer = createPlayer(videoId);
         } else {
             ytPlayer.loadVideoById(videoId);
-            // Autoplay only if triggered by user gesture (e.g., click)
-            try {
-                if (userGesture) {
+            if (userGesture) {
+                try {
                     ytPlayer.playVideo();
-                } else {
+                } catch (error) {
+                    console.error("Autoplay blocked:", error);
                     showToast('Click the play button to start the video.', 'info');
                 }
-            } catch (error) {
-                console.error("Autoplay blocked:", error);
+            } else {
                 showToast('Click the play button to start the video.', 'info');
             }
         }
@@ -1319,7 +1284,7 @@ function debounce(func, wait) {
 // --- Media Session API Integration ---
 
 function updateMediaSessionMetadata(video) {
-    if (!userGesture || !('mediaSession' in navigator) || currentlyPlayingVideoId === video?.id) return;
+    if (!('mediaSession' in navigator)) return;
 
     try {
         navigator.mediaSession.metadata = new MediaMetadata({
