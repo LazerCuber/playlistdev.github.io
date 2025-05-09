@@ -82,7 +82,7 @@
             /* Subtle highlight */
             --background-color: #131316;
             /* Much darker background */
-            --surface-color: #18181b;
+            --surface-color: #131316;
             /* Darker surface */
             --surface-color-alt: #2a2a2a;
             /* Slightly lighter dark */
@@ -98,7 +98,7 @@
             /* Second Color */
             --border-color-second: #333333;
             /* Button Color */
-            --button-color: #202024;
+            --button-color: #18181b;
             /* Subtle inner border */
             --hover-bg-color: #2c2c2c;
             /* Darker hover */
@@ -113,6 +113,7 @@
             --resizer-hover-color: var(--primary-color);
             /* Add Primary RGB for potential use */
             --primary-color-rgb: 229, 115, 115;
+            --video-card-background: #18181b;
         }
 
 
@@ -245,7 +246,7 @@
             padding: 15px; /* Adjusted padding */
             /* border-top: 1px solid var(--border-color-light); */ /* Removed original border-top */
             flex-shrink: 0;
-            background-color: var(--surface-color);
+            background-color: var(--background-color);
             transition: var(--transition-default);
             transition-property: background-color, border-color, padding, margin; /* Added transition properties */
             border: 1px solid var(--border-color-light); /* Added border */
@@ -468,11 +469,6 @@
             border-color: rgba(var(--primary-color-rgb), 0.3);
         }
 
-        /* Playlist Drag & Drop Styles */
-        .playlist-item[draggable="true"] {
-            cursor: grab;
-        }
-
         .playlist-item.dragging {
             opacity: 0.4;
             cursor: grabbing;
@@ -494,7 +490,7 @@
             text-overflow: ellipsis;
             margin-right: 8px;
             flex-grow: 1;
-            pointer-events: none;
+            /* pointer-events: none; */ /* Removed to allow clicking name to select */
         }
 
         .playlist-count {
@@ -521,6 +517,7 @@
             transition: opacity var(--transition-speed) var(--transition-timing);
             flex-shrink: 0;
             margin-left: 8px;
+            align-items: center; /* Align controls vertically */
         }
 
         .playlist-item:hover .controls,
@@ -530,7 +527,8 @@
             opacity: 1;
         }
 
-        .playlist-item .controls button {
+        .playlist-item .controls button,
+        .playlist-item .controls .playlist-drag-handle { /* Include drag handle */
             /* Make control buttons smaller */
             padding: 4px;
             font-size: 0.9rem;
@@ -541,19 +539,31 @@
             box-shadow: none;
         }
 
-        .playlist-item .controls button:hover {
+        .playlist-item .controls button:hover,
+        .playlist-item .controls .playlist-drag-handle:hover { /* Include drag handle */
             background-color: var(--surface-color-alt);
             color: var(--text-color);
         }
 
-        html[data-theme="dark"] .playlist-item .controls button:hover {
+        html[data-theme="dark"] .playlist-item .controls button:hover,
+        html[data-theme="dark"] .playlist-item .controls .playlist-drag-handle:hover {
             background-color: var(--background-color);
         }
 
-        .playlist-item .controls button svg {
+        .playlist-item .controls button svg,
+        .playlist-item .controls .playlist-drag-handle svg { /* Include drag handle */
             width: 0.9em;
             height: 0.9em;
         }
+
+        .playlist-drag-handle {
+            cursor: grab; /* Use grab cursor for the handle */
+        }
+        .playlist-drag-handle:active {
+            cursor: grabbing; /* Use grabbing cursor while dragging */
+            color: var(--text-color); /* Change color while active */
+        }
+
 
         /* --- Main Content --- */
         .main-content {
@@ -717,7 +727,6 @@
             top: 5px;
             right: 5px;
             z-index: calc(var(--z-sticky) + 1);
-            /* Above player controls potentially */
             background-color: rgba(0, 0, 0, 0.5);
             color: white;
             border: none;
@@ -731,6 +740,7 @@
             cursor: pointer;
             opacity: 0.7;
             transition: opacity 0.2s ease, background-color 0.2s ease;
+            transform: translateY(0);
         }
 
         .close-player-btn:hover {
@@ -763,17 +773,17 @@
 
         /* Keep the wrapper visible but maybe add an indicator? */
         body.audio-only-active .player-wrapper {
-            min-height: auto; /* Let content determine height */
-            padding: 5px 40px 5px 15px; /* Top/Bottom padding, space for close btn, left padding */
+            min-height: auto;
+            padding: 5px 40px 5px 15px;
             background-color: var(--surface-color-alt);
             box-shadow: var(--shadow-sm);
-            display: block; /* Ensure it's block */
-            position: sticky; /* Keep it sticky */
+            display: block;
+            position: sticky;
         }
 
         /* New styles for audio-only info */
         .audio-only-info {
-            display: flex; /* Use flex for better alignment */
+            display: none;
             align-items: center;
             gap: 6px;
             font-size: 0.85rem;
@@ -792,21 +802,27 @@
         }
 
         body.audio-only-active .audio-only-info {
-            display: flex; /* Change from none/hidden to flex */
+            display: flex;
         }
         /* End new styles */
 
-        /* Ensure close button is still visible and positioned correctly */
+        /* Audio-only mode close button */
         body.audio-only-active .close-player-btn {
             top: 50%;
-            transform: translateY(-50%);
-            right: 8px; /* Adjust position */
+            right: 8px;
+            transform: translateY(-50%); /* Center vertically using transform */
             background-color: transparent;
             color: var(--icon-color);
+            /* Add these to prevent layout shift on hover */
+            margin: 0;
+            transition: opacity 0.2s ease, background-color 0.2s ease, color 0.2s ease;
         }
+
         body.audio-only-active .close-player-btn:hover {
             background-color: var(--hover-bg-color);
             color: var(--icon-color-hover);
+            /* Maintain position on hover */
+            transform: translateY(-50%);
         }
 
         #player {
@@ -828,12 +844,15 @@
         }
 
         .video-card {
-            background-color: var(--surface-color);
-            border-radius: var(--border-radius-md);
+            background-color: var(--video-card-background);
+            border-radius: var(
+            --border-radius-md);
             overflow: hidden;
-            box-shadow: var(--shadow-xs);
+            box-shadow: var(
+            --shadow-xs);
             cursor: pointer;
-            transition: var(--transition-default);
+            transition: var(
+            --transition-default);
             transition-property: transform, box-shadow, background-color, border-color;
             display: flex;
             flex-direction: column;
@@ -1308,6 +1327,12 @@
                 /* Make controls always visible on touch for easier access */
                 opacity: 1;
             }
+
+            /* Hide playlist drag handle on mobile */
+            .playlist-drag-handle {
+                display: none;
+            }
+
 
             .video-controls .drag-handle {
 

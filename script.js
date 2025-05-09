@@ -12,6 +12,7 @@ const videoFormEl = document.getElementById('videoForm');
 const playerWrapperEl = document.getElementById('playerWrapper');
 const videoPlaceholderEl = document.getElementById('videoPlaceholder');
 const playlistActionsEl = document.getElementById('playlistActions');
+const autoplayToggle = document.getElementById('autoplayToggle');
 const autoplaySwitchDiv = document.querySelector('.control-group .switch');
 const clearPlaylistBtn = document.getElementById('clearPlaylistBtn');
 const themeToggleBtn = document.getElementById('themeToggleBtn');
@@ -41,21 +42,21 @@ let isPlayerReady = false;
 let videoIdToPlayOnReady = null;
 let isAutoplayEnabled = false;
 let isAudioOnlyMode = false;
-let currentlyPlayingVideoId = null;
-let draggedVideoId = null;
-let dragTargetElement = null;
+let currentlyPlayingVideoId = null; // ID of video in YT.Player
+let draggedVideoId = null; // For video DnD
+let dragTargetElement = null; // For video DnD
 let currentTheme = 'light';
-let isResizing = false;
-let lastSidebarWidth = null;
-let isTouchDragging = false;
-let touchDragStartY = 0;
-let touchDraggedElement = null;
-let potentialPlayVideoId = null;
-let potentialPlayCard = null;
+let isResizing = false; // Sidebar resizing
+let isTouchDragging = false; // Video touch drag state
+let touchDraggedElement = null; // Element being touch-dragged
+let potentialPlayVideoId = null; // For tap-to-play on touch devices
+let potentialPlayCard = null; // Card associated with potentialPlayVideoId
 const videosPerPage = 20;
 let currentPage = 1;
 let isYTApiReady = false;
-let userGesture = false;
+let userGesture = false; // True after first user interaction
+let draggedPlaylistId = null; // For playlist DnD
+let dragTargetPlaylistElement = null; // For playlist DnD
 
 // --- Icons ---
 const ICONS = {
@@ -70,6 +71,7 @@ const ICONS = {
     error: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zM5.354 4.646a.5.5 0 1 0-.708.708L7.293 8l-2.647 2.646a.5.5 0 0 0 .708.708L8 8.707l2.646 2.647a.5.5 0 0 0 .708-.708L8.707 8l2.647-2.646a.5.5 0 0 0-.708-.708L8 7.293 5.354 4.646z"/></svg>`,
     info: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/></svg>`
 };
+const escapeElement = document.createElement('div'); // Reusable element for HTML escaping
 
 // --- Initialization ---
 function init() {
@@ -78,10 +80,9 @@ function init() {
     loadAutoplaySetting();
     loadAudioOnlySetting();
     loadSidebarWidth();
-    renderPlaylists();
+    loadYouTubePlayerAPI(); // Preload
 
-    // Preload YouTube Player API immediately
-    loadYouTubePlayerAPI();
+    renderPlaylists();
 
     const lastSelectedId = localStorage.getItem('lastSelectedPlaylistId');
     if (lastSelectedId && playlists.some(p => p.id === parseInt(lastSelectedId))) {
@@ -94,26 +95,26 @@ function init() {
 
     setupEventListeners();
     updateThemeIcon();
-
     document.addEventListener('click', () => { userGesture = true; }, { once: true });
 }
 
 // --- YouTube Player API ---
 let ytApiLoadPromise = null;
-
 function loadYouTubePlayerAPI() {
     if (ytApiLoadPromise) return ytApiLoadPromise;
 
     ytApiLoadPromise = new Promise((resolve, reject) => {
+        if (window.YT && window.YT.Player) { // API might already be loaded
+            isYTApiReady = true;
+            resolve();
+            return;
+        }
         const tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-        // Timeout after 10 seconds
-        const timeoutId = setTimeout(() => {
-            reject(new Error('YouTube API failed to load.'));
-        }, 10000);
+        const timeoutId = setTimeout(() => reject(new Error('YouTube API load timeout.')), 10000);
 
         window.onYouTubeIframeAPIReady = () => {
             clearTimeout(timeoutId);
@@ -123,71 +124,159 @@ function loadYouTubePlayerAPI() {
     }).catch(error => {
         console.error("YouTube API load error:", error);
         showToast('Failed to load YouTube player. Please refresh.', 'error');
-        throw error; // Allow retries
+        throw error; // Propagate error for awaiters
     });
-
     return ytApiLoadPromise;
+}
+
+// This function MUST be global for the API to find it if `window.onYouTubeIframeAPIReady` is set after script load
+function onYouTubeIframeAPIReady() {
+    // This function is primarily a fallback. loadYouTubePlayerAPI handles its own resolve.
+    isYTApiReady = true;
+    if (videoIdToPlayOnReady && ytPlayer) { // Check if ytPlayer exists because onPlayerReady might initialize it
+        playVideo(videoIdToPlayOnReady);
+    }
+}
+
+function createPlayer(videoId) {
+    return new YT.Player('player', {
+        height: '100%',
+        width: '100%',
+        videoId: videoId,
+        playerVars: { 'playsinline': 1, 'rel': 0, 'enablejsapi': 1, 'autoplay': 1 },
+        events: {
+            'onReady': onPlayerReady,
+            'onStateChange': onPlayerStateChange,
+            'onError': onPlayerError
+        }
+    });
+}
+
+function onPlayerReady(event) {
+    isPlayerReady = true;
+    videoIdToPlayOnReady = null; // Clear queue
+    // Autoplay is handled by playerVars or explicit playVideo call
+    try {
+        if (userGesture) event.target.playVideo();
+    } catch (e) {
+        console.warn("Autoplay on ready blocked:", e);
+    }
+}
+
+function onPlayerStateChange(event) {
+    if (!ytPlayer) return;
+
+    let videoIdFromEvent = null;
+    try {
+        const videoData = event.target.getVideoData();
+        videoIdFromEvent = videoData ? videoData.video_id : null;
+    } catch (e) { /* Silently ignore */ }
+
+    if (videoIdFromEvent) {
+        currentlyPlayingVideoId = videoIdFromEvent;
+    }
+
+    const currentVideo = getCurrentVideo(currentlyPlayingVideoId);
+
+    if (event.data === YT.PlayerState.PLAYING) {
+        updatePlayerRelatedUI(currentlyPlayingVideoId);
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
+    } else if (event.data === YT.PlayerState.PAUSED) {
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
+    } else if (event.data === YT.PlayerState.ENDED) {
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "none";
+        if (isAutoplayEnabled) {
+            playNextVideo();
+        } else {
+            updatePlayerRelatedUI(null);
+        }
+    } else if (event.data === YT.PlayerState.CUED) {
+        updateMediaSessionMetadata(currentVideo); // Ensure metadata is set for cued video
+        if ('mediaSession' in navigator && navigator.mediaSession.playbackState !== 'playing') {
+            navigator.mediaSession.playbackState = "paused"; // Treat cued as paused for media controls
+        }
+    } else if (event.data === YT.PlayerState.UNSTARTED) {
+         if ('mediaSession' in navigator && navigator.mediaSession.playbackState !== 'playing' && navigator.mediaSession.playbackState !== 'paused') {
+            navigator.mediaSession.playbackState = "none";
+        }
+    }
+}
+
+function onPlayerError(event) {
+    if (!ytPlayer) return;
+    console.error('YouTube Player Error:', event.data);
+
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+
+    let errorMsg = 'An unknown player error occurred.';
+    let shouldSkip = true;
+    switch (event.data) {
+        case 2: errorMsg = 'Invalid video ID or player parameter.'; break;
+        case 5: errorMsg = 'Error in the HTML5 player.'; break;
+        case 100: errorMsg = 'Video not found (removed or private).'; break;
+        case 101: case 150: errorMsg = 'Playback disallowed by video owner.'; break;
+        default: errorMsg = `Player error code: ${event.data}`; break;
+    }
+    showToast(`Player Error: ${errorMsg}`, 'error');
+
+    if (isAutoplayEnabled && shouldSkip) {
+        showToast(`Skipping to next video.`, 'info', 4000);
+        setTimeout(() => { // Delay to prevent rapid error loops
+            if (ytPlayer && isAutoplayEnabled) playNextVideo(); else handleClosePlayer();
+        }, 500);
+    } else {
+        handleClosePlayer();
+    }
 }
 
 // --- Sidebar Resizing ---
 function loadSidebarWidth() {
     const savedWidth = localStorage.getItem('sidebarWidth');
-    if (savedWidth) {
-        sidebarEl.style.width = savedWidth + 'px';
-    }
+    if (savedWidth) sidebarEl.style.width = savedWidth + 'px';
 }
-
-function saveSidebarWidth(width) {
-    localStorage.setItem('sidebarWidth', width);
-}
-
+function saveSidebarWidth(width) { localStorage.setItem('sidebarWidth', width); }
 function initSidebarResize(e) {
     isResizing = true;
     sidebarResizerEl.classList.add('resizing');
     document.body.style.userSelect = 'none';
-    lastSidebarWidth = sidebarEl.getBoundingClientRect().width;
     document.addEventListener('mousemove', handleSidebarResize);
     document.addEventListener('mouseup', stopSidebarResize);
     e.preventDefault();
 }
-
 function handleSidebarResize(e) {
     if (!isResizing) return;
-
     const containerRect = document.querySelector('.container').getBoundingClientRect();
     const newWidth = Math.max(
         parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-min-width')),
-        Math.min(e.clientX - containerRect.left,
-            parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-max-width')))
+        Math.min(e.clientX - containerRect.left, parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-max-width')))
     );
-
     sidebarEl.style.width = newWidth + 'px';
 }
-
 function stopSidebarResize() {
     isResizing = false;
     sidebarResizerEl.classList.remove('resizing');
     document.body.style.userSelect = '';
     document.removeEventListener('mousemove', handleSidebarResize);
     document.removeEventListener('mouseup', stopSidebarResize);
-
-    const currentWidth = sidebarEl.getBoundingClientRect().width;
-    saveSidebarWidth(currentWidth);
+    saveSidebarWidth(sidebarEl.getBoundingClientRect().width);
 }
 
 // --- Event Listeners ---
+function setupInputListeners(input, button, handler) {
+    input.addEventListener('keypress', (e) => { if (e.key === 'Enter') handler(); });
+    button.addEventListener('click', handler);
+}
 function setupEventListeners() {
     setupInputListeners(playlistNameInput, createPlaylistBtn, handleCreatePlaylist);
     setupInputListeners(videoUrlInput, addVideoBtn, handleAddVideo);
     videoUrlInput.addEventListener('input', () => { addVideoBtn.disabled = videoUrlInput.value.trim() === ''; });
+
     autoplayToggle.addEventListener('change', handleAutoplayToggle);
     audioOnlyToggle.addEventListener('change', handleAudioOnlyToggle);
 
     autoplaySwitchDiv.addEventListener('click', handleVisualSwitchClick);
     const audioOnlySwitchDiv = audioOnlyToggle.closest('.switch');
-    if (audioOnlySwitchDiv) {
-        audioOnlySwitchDiv.addEventListener('click', handleVisualSwitchClick);
-    }
+    if (audioOnlySwitchDiv) audioOnlySwitchDiv.addEventListener('click', handleVisualSwitchClick);
 
     clearPlaylistBtn.addEventListener('click', handleClearPlaylist);
     themeToggleBtn.addEventListener('click', toggleTheme);
@@ -196,58 +285,21 @@ function setupEventListeners() {
     importBtn.addEventListener('click', () => importFileEl.click());
     importFileEl.addEventListener('change', handleImportPlaylists);
     exportBtn.addEventListener('click', handleExportPlaylists);
-
     sidebarResizerEl.addEventListener('mousedown', initSidebarResize);
-
-    // Playlist Actions (Delegation)
-    playlistListEl.addEventListener('click', (event) => {
-        const playlistItem = event.target.closest('.playlist-item');
-        if (!playlistItem) return;
-        const playlistId = parseInt(playlistItem.dataset.id);
-
-        if (event.target.closest('.rename-btn')) {
-            event.stopPropagation(); handleRenamePlaylist(playlistId);
-        } else if (event.target.closest('.delete-btn')) {
-            event.stopPropagation(); handleDeletePlaylist(playlistId);
-        } else if (!event.target.closest('.controls')) {
-            selectPlaylist(playlistId);
-        }
-    });
-
-    // Video Actions (Delegation)
-    videoGridEl.addEventListener('click', (event) => {
-        const videoCard = event.target.closest('.video-card');
-        if (!videoCard) return;
-        const videoId = videoCard.dataset.videoId;
-
-        if (event.target.closest('.delete-video-btn')) {
-            event.stopPropagation(); handleDeleteVideo(videoId);
-        } else if (!event.target.closest('.drag-handle')) {
-            playVideo(videoId);
-        }
-    });
-
-    setupDragAndDropListeners();
     closePlayerBtn.addEventListener('click', handleClosePlayer);
 
-    // Pagination Listeners
-    prevPageBtn.addEventListener('click', () => {
-        if (currentPage > 1) {
-            currentPage--;
-            renderVideos();
-        }
-    });
-    nextPageBtn.addEventListener('click', () => {
-        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-        if (!currentPlaylist) return;
-        const totalPages = Math.ceil(currentPlaylist.videos.length / videosPerPage);
-        if (currentPage < totalPages) {
-            currentPage++;
-            renderVideos();
-        }
-    });
+    // Event Delegation
+    playlistListEl.addEventListener('click', handlePlaylistListClick);
+    videoGridEl.addEventListener('click', handleVideoGridClick);
 
-    // Touch Events for Drag/Drop
+    // Video Drag & Drop (Desktop)
+    videoGridEl.addEventListener('dragstart', handleVideoDragStart);
+    videoGridEl.addEventListener('dragend', handleVideoDragEnd);
+    videoGridEl.addEventListener('dragover', handleVideoDragOver);
+    videoGridEl.addEventListener('dragleave', handleVideoDragLeave);
+    videoGridEl.addEventListener('drop', handleVideoDrop);
+
+    // Video Drag & Drop (Touch)
     videoGridEl.addEventListener('touchstart', handleTouchStart, { passive: false });
     videoGridEl.addEventListener('touchmove', handleTouchMove, { passive: false });
     videoGridEl.addEventListener('touchend', handleTouchEnd);
@@ -259,341 +311,237 @@ function setupEventListeners() {
     playlistListEl.addEventListener('dragover', handlePlaylistDragOver);
     playlistListEl.addEventListener('dragleave', handlePlaylistDragLeave);
     playlistListEl.addEventListener('drop', handlePlaylistDrop);
+
+    // Pagination
+    prevPageBtn.addEventListener('click', () => { if (currentPage > 1) { currentPage--; renderVideos(); } });
+    nextPageBtn.addEventListener('click', () => {
+        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+        if (!currentPlaylist) return;
+        const totalPages = Math.ceil(currentPlaylist.videos.length / videosPerPage);
+        if (currentPage < totalPages) { currentPage++; renderVideos(); }
+    });
 }
 
-// --- Drag and Drop (Videos) ---
-function setupDragAndDropListeners() {
-    videoGridEl.addEventListener('dragstart', handleDragStart);
-    videoGridEl.addEventListener('dragend', handleDragEnd);
-    videoGridEl.addEventListener('dragover', handleDragOver);
-    videoGridEl.addEventListener('dragleave', handleDragLeave);
-    videoGridEl.addEventListener('drop', handleDrop);
+function handlePlaylistListClick(event) {
+    const playlistItem = event.target.closest('.playlist-item');
+    if (!playlistItem) return;
+    const playlistId = parseInt(playlistItem.dataset.id);
+
+    if (event.target.closest('.rename-btn')) {
+        event.stopPropagation(); handleRenamePlaylist(playlistId);
+    } else if (event.target.closest('.delete-btn')) {
+        event.stopPropagation(); handleDeletePlaylist(playlistId);
+    } else if (!event.target.closest('.controls')) {
+        selectPlaylist(playlistId);
+    }
 }
 
-function handleDragStart(event) {
+function handleVideoGridClick(event) {
     const videoCard = event.target.closest('.video-card');
-    if (videoCard && videoCard.draggable) {
+    if (!videoCard) return;
+    const videoId = videoCard.dataset.videoId;
+
+    if (event.target.closest('.delete-video-btn')) {
+        event.stopPropagation(); handleDeleteVideo(videoId);
+    } else if (!event.target.closest('.drag-handle')) {
+        playVideo(videoId);
+    }
+}
+
+// --- Drag and Drop (Videos - Desktop) ---
+function handleVideoDragStart(event) {
+    const videoCard = event.target.closest('.video-card[draggable="true"]');
+    if (videoCard) {
         draggedVideoId = videoCard.dataset.videoId;
         event.dataTransfer.effectAllowed = 'move';
-        setTimeout(() => videoCard.classList.add('dragging'), 0); // Add class after a tick for visual feedback
+        setTimeout(() => videoCard.classList.add('dragging'), 0);
     }
 }
-
-function handleDragEnd(event) {
+function handleVideoDragEnd() {
     const draggingElement = videoGridEl.querySelector('.video-card.dragging');
-    if (draggingElement) {
-        draggingElement.classList.remove('dragging');
-    }
-    clearDragOverStyles();
+    if (draggingElement) draggingElement.classList.remove('dragging');
+    clearDragOverStyles(videoGridEl, '.video-card.drag-over');
     draggedVideoId = null;
     dragTargetElement = null;
 }
-
-function handleDragOver(event) {
+function handleVideoDragOver(event) {
     event.preventDefault();
     if (!draggedVideoId) return;
     event.dataTransfer.dropEffect = 'move';
-
-    const targetCard = event.target.closest('.video-card');
-    let currentTarget = null;
+    const targetCard = event.target.closest('.video-card[draggable="true"]');
     if (targetCard && targetCard.dataset.videoId !== draggedVideoId) {
-        currentTarget = targetCard;
-    }
-
-    if (currentTarget !== dragTargetElement) {
-        if (dragTargetElement) {
+        if (dragTargetElement !== targetCard) {
+            if (dragTargetElement) dragTargetElement.classList.remove('drag-over');
+            targetCard.classList.add('drag-over');
+            dragTargetElement = targetCard;
+        }
+    } else if (targetCard && targetCard.dataset.videoId === draggedVideoId) {
+        // Hovering over itself, clear any other drag-over
+        if (dragTargetElement && dragTargetElement !== targetCard) {
             dragTargetElement.classList.remove('drag-over');
         }
-        if (currentTarget) {
-            currentTarget.classList.add('drag-over');
-        }
-        dragTargetElement = currentTarget;
-    }
-
-    if (!currentTarget) {
-         event.dataTransfer.dropEffect = 'none';
+        dragTargetElement = null; // No valid drop target
     }
 }
-
-function handleDragLeave(event) {
-    // Prevents flicker when moving between cards.
+function handleVideoDragLeave(event) {
     if (!event.relatedTarget || !videoGridEl.contains(event.relatedTarget)) {
-        if (dragTargetElement) {
-            dragTargetElement.classList.remove('drag-over');
-        }
+        clearDragOverStyles(videoGridEl, '.video-card.drag-over');
         dragTargetElement = null;
     }
 }
-
-function handleDrop(event) {
+function handleVideoDrop(event) {
     event.preventDefault();
     const dropTargetId = dragTargetElement ? dragTargetElement.dataset.videoId : null;
-
-    clearDragOverStyles();
-
+    clearDragOverStyles(videoGridEl, '.video-card.drag-over');
     if (draggedVideoId && dropTargetId && dropTargetId !== draggedVideoId) {
         handleReorderVideo(draggedVideoId, dropTargetId);
     }
-    // Resetting state happens in handleDragEnd
+    // State reset in handleVideoDragEnd
 }
 
-function clearDragOverStyles() {
-    const highlightedCard = videoGridEl.querySelector('.video-card.drag-over');
-    if(highlightedCard) {
-        highlightedCard.classList.remove('drag-over');
+// --- Drag and Drop (Playlists - Desktop) ---
+function handlePlaylistDragStart(event) {
+    const playlistItem = event.target.closest('.playlist-item[draggable="true"]');
+    if (playlistItem && !event.target.closest('.controls')) {
+        draggedPlaylistId = parseInt(playlistItem.dataset.id);
+        event.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => playlistItem.classList.add('dragging'), 0);
+        dragTargetPlaylistElement = null;
+    } else if (playlistItem && event.target.closest('.controls')) {
+        event.preventDefault(); // Prevent dragging by controls
     }
-    if (dragTargetElement) {
-         dragTargetElement.classList.remove('drag-over');
+}
+function handlePlaylistDragEnd() {
+    const draggingItem = playlistListEl.querySelector('.playlist-item.dragging');
+    if (draggingItem) draggingItem.classList.remove('dragging');
+    clearDragOverStyles(playlistListEl, '.playlist-item.drag-over');
+    draggedPlaylistId = null;
+    dragTargetPlaylistElement = null;
+}
+function handlePlaylistDragOver(event) {
+    event.preventDefault();
+    if (!draggedPlaylistId) return;
+    event.dataTransfer.dropEffect = 'move';
+    const targetItem = event.target.closest('.playlist-item[draggable="true"]');
+    if (targetItem && parseInt(targetItem.dataset.id) !== draggedPlaylistId) {
+        if (dragTargetPlaylistElement !== targetItem) {
+            if (dragTargetPlaylistElement) dragTargetPlaylistElement.classList.remove('drag-over');
+            targetItem.classList.add('drag-over');
+            dragTargetPlaylistElement = targetItem;
+        }
+    } else if (targetItem && parseInt(targetItem.dataset.id) === draggedPlaylistId) {
+        if (dragTargetPlaylistElement && dragTargetPlaylistElement !== targetItem) {
+             dragTargetPlaylistElement.classList.remove('drag-over');
+        }
+        dragTargetPlaylistElement = null;
     }
+}
+function handlePlaylistDragLeave(event) {
+    if (!event.relatedTarget || !playlistListEl.contains(event.relatedTarget)) {
+        clearDragOverStyles(playlistListEl, '.playlist-item.drag-over');
+        dragTargetPlaylistElement = null;
+    }
+}
+function handlePlaylistDrop(event) {
+    event.preventDefault();
+    const dropTargetId = dragTargetPlaylistElement ? parseInt(dragTargetPlaylistElement.dataset.id) : null;
+    clearDragOverStyles(playlistListEl, '.playlist-item.drag-over');
+    if (draggedPlaylistId && dropTargetId && dropTargetId !== draggedPlaylistId) {
+        handleReorderPlaylist(draggedPlaylistId, dropTargetId);
+    }
+    // State reset in handlePlaylistDragEnd
+}
+
+function clearDragOverStyles(container, selector) {
+    const highlighted = container.querySelector(selector);
+    if (highlighted) highlighted.classList.remove('drag-over');
+    // Also clear direct target reference if it exists and wasn't caught by selector
+    if (container === videoGridEl && dragTargetElement) dragTargetElement.classList.remove('drag-over');
+    if (container === playlistListEl && dragTargetPlaylistElement) dragTargetPlaylistElement.classList.remove('drag-over');
+}
+
+
+// --- Touch Event Handlers for Video Drag/Drop ---
+function handleTouchStart(event) {
+    const videoCard = event.target.closest('.video-card[draggable="true"]');
+    if (!videoCard) return;
+
+    if (event.target.closest('button, .delete-video-btn, .controls')) return;
+
+    if (event.target.closest('.drag-handle')) {
+        event.preventDefault(); // Prevent scroll only when starting drag from handle
+        touchDraggedElement = videoCard;
+        draggedVideoId = videoCard.dataset.videoId;
+        isTouchDragging = true;
+        requestAnimationFrame(() => {
+            if (isTouchDragging && touchDraggedElement) touchDraggedElement.classList.add('dragging');
+        });
+        potentialPlayVideoId = null; // Not a play attempt
+        potentialPlayCard = null;
+    } else {
+        potentialPlayVideoId = videoCard.dataset.videoId;
+        potentialPlayCard = videoCard;
+        videoCard.classList.add('touch-active');
+    }
+}
+function handleTouchMove(event) {
+    if (isTouchDragging && touchDraggedElement) {
+        event.preventDefault(); // Prevent scroll while dragging
+        const touch = event.touches[0];
+        const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
+        const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card[draggable="true"]') : null;
+
+        if (targetCard && targetCard !== touchDraggedElement) {
+            if (dragTargetElement) dragTargetElement.classList.remove('drag-over');
+            targetCard.classList.add('drag-over');
+            dragTargetElement = targetCard;
+        } else if (!targetCard && dragTargetElement) {
+            dragTargetElement.classList.remove('drag-over');
+            dragTargetElement = null;
+        }
+    } else if (potentialPlayVideoId && potentialPlayCard) {
+        // If moved significantly, cancel tap-to-play intent
+        potentialPlayCard.classList.remove('touch-active');
+        potentialPlayVideoId = null;
+        potentialPlayCard = null;
+    }
+}
+function handleTouchEnd() {
+    if (isTouchDragging) {
+        if (draggedVideoId && dragTargetElement && dragTargetElement.dataset.videoId !== draggedVideoId) {
+            handleReorderVideo(draggedVideoId, dragTargetElement.dataset.videoId);
+        }
+        if (touchDraggedElement) touchDraggedElement.classList.remove('dragging');
+        clearDragOverStyles(videoGridEl, '.video-card.drag-over');
+        isTouchDragging = false;
+        touchDraggedElement = null;
+        draggedVideoId = null;
+        dragTargetElement = null;
+    } else if (potentialPlayVideoId && potentialPlayCard) {
+        playVideo(potentialPlayVideoId);
+        potentialPlayCard.classList.remove('touch-active');
+    } else if (potentialPlayCard) { // Just cleanup if no action
+        potentialPlayCard.classList.remove('touch-active');
+    }
+    potentialPlayVideoId = null;
+    potentialPlayCard = null;
 }
 
 // --- Theme Management ---
-function loadTheme() {
-    const savedTheme = localStorage.getItem('uiTheme') || 'light';
-    applyTheme(savedTheme);
-}
+function loadTheme() { applyTheme(localStorage.getItem('uiTheme') || 'light'); }
 function applyTheme(themeName) {
     currentTheme = themeName;
     htmlEl.dataset.theme = themeName;
     updateThemeIcon();
     localStorage.setItem('uiTheme', themeName);
 }
-function toggleTheme() {
-    applyTheme(currentTheme === 'light' ? 'dark' : 'light');
-}
+function toggleTheme() { applyTheme(currentTheme === 'light' ? 'dark' : 'light'); }
 function updateThemeIcon() {
     themeToggleBtn.innerHTML = currentTheme === 'dark' ? ICONS.sun : ICONS.moon;
-    themeToggleBtn.title = currentTheme === 'dark' ? 'Switch to Light Theme' : 'Switch to Dark Theme';
+    themeToggleBtn.title = `Switch to ${currentTheme === 'dark' ? 'Light' : 'Dark'} Theme`;
 }
 
-// --- YouTube Player API ---
-
-// This function MUST be global for the API to find it
-function onYouTubeIframeAPIReady() {
-    isYTApiReady = true;
-    // If a video was queued *before* the API was ready,
-    // the playVideo call will now handle initialization.
-    if (videoIdToPlayOnReady) {
-        playVideo(videoIdToPlayOnReady);
-    }
-}
-
-function createPlayer(videoId) {
-    const player = new YT.Player('player', {
-        height: '100%',
-        width: '100%',
-        videoId: videoId,
-        playerVars: {
-            'playsinline': 1,
-            'rel': 0,
-            'enablejsapi': 1,
-            'autoplay': 1,
-        },
-        events: {
-            'onReady': onPlayerReady,
-            'onStateChange': onPlayerStateChange,
-            'onError': onPlayerError
-        }
-    });
-    // Hack for iOS
-    const iframe = document.getElementById('player');
-    if (isIOS() && iframe) {
-        iframe.setAttribute('webkit-playsinline', 'true');
-    }
-    return player;
-}
-
-function onPlayerReady(event) {
-    isPlayerReady = true;
-    const videoData = event.target.getVideoData();
-    const readyVideoId = videoData ? videoData.video_id : null;
-
-    if (readyVideoId) {
-         try {
-            event.target.playVideo();
-         } catch (e) {
-             console.error("Error during playVideo() in onPlayerReady:", e); // Keep critical errors
-         }
-    }
-    videoIdToPlayOnReady = null;
-}
-
-function onPlayerStateChange(event) {
-    if (!ytPlayer) return;
-
-    let videoData = null;
-    let videoIdFromEvent = null;
-    try {
-        videoData = event.target.getVideoData();
-        videoIdFromEvent = videoData ? videoData.video_id : null;
-    } catch (e) {
-        // Silently ignore if getting data fails
-    }
-
-    if (videoIdFromEvent) {
-        currentlyPlayingVideoId = videoIdFromEvent;
-    }
-
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    const video = currentPlaylist?.videos.find(v => v.id === currentlyPlayingVideoId);
-
-    if (event.data === YT.PlayerState.PLAYING) {
-        updatePlayingVideoHighlight(currentlyPlayingVideoId);
-        updateAudioOnlyDisplay(video?.title);
-        updateMediaSessionMetadata(video);
-
-        if ('mediaSession' in navigator) {
-            navigator.mediaSession.playbackState = "playing";
-        }
-    } else if (event.data === YT.PlayerState.PAUSED) {
-        if ('mediaSession' in navigator) {
-            navigator.mediaSession.playbackState = "paused";
-        }
-    } else if (event.data === YT.PlayerState.ENDED) {
-        if ('mediaSession' in navigator) {
-            navigator.mediaSession.playbackState = "none";
-        }
-        if (isAutoplayEnabled) {
-            playNextVideo();
-        } else {
-            updatePlayingVideoHighlight(null);
-            updateAudioOnlyDisplay(null);
-            updateMediaSessionMetadata(null);
-        }
-    } else if (event.data === YT.PlayerState.CUED) {
-        updateMediaSessionMetadata(video);
-        if ('mediaSession' in navigator) {
-            if (navigator.mediaSession.playbackState !== 'playing' && navigator.mediaSession.playbackState !== 'paused') {
-                navigator.mediaSession.playbackState = "paused";
-            }
-        }
-    } else if (event.data === YT.PlayerState.UNSTARTED) {
-        if ('mediaSession' in navigator) {
-            if (navigator.mediaSession.playbackState !== 'playing' && navigator.mediaSession.playbackState !== 'paused') {
-                navigator.mediaSession.playbackState = "none";
-            }
-        }
-    }
-}
-
-function onPlayerError(event) {
-    if (!ytPlayer) return;
-
-    console.error('YouTube Player Error:', event.data); // Keep critical errors
-    let errorMsg = 'An unknown player error occurred.';
-    const videoData = event.target.getVideoData ? event.target.getVideoData() : null;
-    const videoId = videoData ? videoData.video_id : currentlyPlayingVideoId;
-
-    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
-
-    let shouldSkip = false;
-
-    switch (event.data) {
-        case 2: errorMsg = 'Invalid video ID or player parameter.'; shouldSkip = true; break;
-        case 5: errorMsg = 'Error in the HTML5 player.'; shouldSkip = true; break;
-        case 100: errorMsg = 'Video not found (removed or private).'; shouldSkip = true; break;
-        case 101: case 150: errorMsg = 'Playback disallowed by video owner.'; shouldSkip = true; break;
-        default: errorMsg = `Player error code: ${event.data}`; shouldSkip = true; break;
-    }
-
-    showToast(`Player Error: ${errorMsg}`, 'error');
-
-    if (isAutoplayEnabled && shouldSkip) {
-        showToast(`${errorMsg} Skipping to next video.`, 'info', 4000);
-        setTimeout(() => {
-            if (ytPlayer && isAutoplayEnabled) {
-                playNextVideo();
-            } else {
-                handleClosePlayer();
-            }
-        }, 500); // Delay to prevent potential error loops
-    } else {
-        handleClosePlayer();
-    }
-}
-
-function getCurrentPlayingVideoIdFromApi() {
-    if (ytPlayer && isPlayerReady && typeof ytPlayer.getVideoData === 'function') {
-        try {
-            const videoData = ytPlayer.getVideoData();
-            return videoData ? videoData.video_id : null;
-        } catch (e) {
-            return null;
-        }
-    }
-    return null;
-}
-
-function playNextVideo() {
-    if (!ytPlayer || !currentPlaylistId) return;
-
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (!currentPlaylist || currentPlaylist.videos.length < 1) return;
-
-    if (!currentlyPlayingVideoId && currentPlaylist.videos.length > 0) {
-        playVideo(currentPlaylist.videos[0].id);
-        return;
-    }
-    if (!currentlyPlayingVideoId || currentPlaylist.videos.length < 2) {
-        handleClosePlayer();
-        return;
-    }
-
-    const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
-    if (currentIndex === -1) {
-        if (currentPlaylist.videos.length > 0) {
-            playVideo(currentPlaylist.videos[0].id);
-        } else {
-             handleClosePlayer();
-        }
-        return;
-    }
-
-    const nextIndex = (currentIndex + 1) % currentPlaylist.videos.length;
-    const nextVideo = currentPlaylist.videos[nextIndex];
-    if (nextVideo) {
-        playVideo(nextVideo.id);
-    } else {
-        handleClosePlayer();
-    }
-}
-
-function playPreviousVideo() {
-    if (!ytPlayer || !currentPlaylistId) return;
-
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (!currentPlaylist || currentPlaylist.videos.length < 1) return;
-
-    if (!currentlyPlayingVideoId && currentPlaylist.videos.length > 0) {
-        // If nothing is playing, maybe play the last video? Or first? Let's play the last.
-        playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
-        return;
-    }
-    if (!currentlyPlayingVideoId || currentPlaylist.videos.length < 2) {
-        // Only one video, just replay it? Or stop? Let's replay.
-        if (currentlyPlayingVideoId) playVideo(currentlyPlayingVideoId);
-        else handleClosePlayer();
-        return;
-    }
-
-    const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
-    if (currentIndex === -1) {
-        // If current video not found, play the last video as a sensible default
-        playVideo(currentPlaylist.videos[currentPlaylist.videos.length - 1].id);
-        return;
-    }
-
-    const prevIndex = (currentIndex - 1 + currentPlaylist.videos.length) % currentPlaylist.videos.length;
-    const prevVideo = currentPlaylist.videos[prevIndex];
-    if (prevVideo) {
-        playVideo(prevVideo.id);
-    } else {
-        handleClosePlayer(); // Should not happen with modulo logic, but safeguard
-    }
-}
-
-
-// --- Local Storage & State ---
+// --- Local Storage & State Helpers ---
 function savePlaylists() { localStorage.setItem('playlists', JSON.stringify(playlists)); }
 function loadPlaylists() {
     playlists = JSON.parse(localStorage.getItem('playlists')) || [];
@@ -611,12 +559,11 @@ function loadAudioOnlySetting() {
     audioOnlyToggle.checked = isAudioOnlyMode;
     applyAudioOnlyClass();
 }
-function applyAudioOnlyClass() {
-    if (isAudioOnlyMode) {
-        bodyEl.classList.add('audio-only-active');
-    } else {
-        bodyEl.classList.remove('audio-only-active');
-    }
+function applyAudioOnlyClass() { bodyEl.classList.toggle('audio-only-active', isAudioOnlyMode); }
+function getCurrentVideo(videoId) {
+    if (!currentPlaylistId || !videoId) return null;
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    return currentPlaylist?.videos.find(v => v.id === videoId);
 }
 
 // --- Playlist Management ---
@@ -630,33 +577,30 @@ function handleCreatePlaylist() {
     renderPlaylists();
     selectPlaylist(newPlaylist.id);
     playlistNameInput.value = '';
-    showToast(`Playlist "${escapeHTML(name)}" created.`, 'success');
+    createPlaylistBtn.disabled = true;
+    showToast(`Playlist "${name}" created.`, 'success');
 }
-
 function handleDeletePlaylist(id) {
     const playlistIndex = playlists.findIndex(p => p.id === id);
     if (playlistIndex === -1) return;
     const playlistName = playlists[playlistIndex].name;
-
-    if (!confirm(`Are you sure you want to delete the playlist "${escapeHTML(playlistName)}"? This cannot be undone.`)) return;
+    if (!confirm(`Are you sure you want to delete playlist "${playlistName}"?`)) return;
 
     playlists.splice(playlistIndex, 1);
-
     if (currentPlaylistId === id) {
-        currentPlaylistId = null;
+        currentPlaylistId = null; // Will be handled by selectPlaylist or updateUIForNoSelection
         saveLastSelectedPlaylist(null);
         if (playlists.length > 0) {
-            const nextIndex = Math.min(playlistIndex, playlists.length - 1);
-            selectPlaylist(playlists[nextIndex >= 0 ? nextIndex : 0]?.id);
+            const nextIndexToSelect = Math.max(0, Math.min(playlistIndex, playlists.length - 1));
+            selectPlaylist(playlists[nextIndexToSelect]?.id);
         } else {
             updateUIForNoSelection();
         }
     }
     savePlaylists();
     renderPlaylists();
-    showToast(`Playlist "${escapeHTML(playlistName)}" deleted.`, 'info');
+    showToast(`Playlist "${playlistName}" deleted.`, 'info');
 }
-
 function handleRenamePlaylist(id) {
     const playlist = playlists.find(p => p.id === id);
     if (!playlist) return;
@@ -666,247 +610,264 @@ function handleRenamePlaylist(id) {
         playlist.name = newName.trim();
         savePlaylists();
         renderPlaylists();
-        if (currentPlaylistId === id) {
-            currentPlaylistTitleEl.textContent = escapeHTML(playlist.name);
-        }
-        showToast(`Playlist renamed from "${escapeHTML(oldName)}" to "${escapeHTML(playlist.name)}".`, 'info');
+        if (currentPlaylistId === id) currentPlaylistTitleEl.textContent = playlist.name;
+        showToast(`Playlist renamed from "${oldName}" to "${playlist.name}".`, 'info');
     }
 }
-
 function selectPlaylist(id) {
     const selectedPlaylist = playlists.find(p => p.id === id);
-    if (!selectedPlaylist) {
-        updateUIForNoSelection();
-        return;
-    }
+    if (!selectedPlaylist) { updateUIForNoSelection(); return; }
 
     currentPlaylistId = id;
     currentPage = 1;
     saveLastSelectedPlaylist(id);
+    if (playlistSearchInput.value !== '') playlistSearchInput.value = '';
 
-    if (playlistSearchInput.value !== '') {
-        playlistSearchInput.value = '';
-    }
-
-    currentPlaylistTitleEl.textContent = escapeHTML(selectedPlaylist.name);
+    currentPlaylistTitleEl.textContent = selectedPlaylist.name;
     videoFormEl.classList.remove('hidden');
     playlistActionsEl.classList.remove('hidden');
     addVideoBtn.disabled = videoUrlInput.value.trim() === '';
     videoPlaceholderEl.classList.add('hidden');
-    playerWrapperEl.classList.add('hidden');
-    stopVideo();
-    updatePlayingVideoHighlight(null);
 
-    renderPlaylists();
+    // If player is open for a different playlist's video, or just open, close it.
+    // If it was playing a video from THIS playlist, it's fine to leave it.
+    // Simpler: always close unless the video being played is from the newly selected playlist.
+    const currentPlayingVideoFromThisPlaylist = selectedPlaylist.videos.some(v => v.id === currentlyPlayingVideoId);
+    if (ytPlayer && !currentPlayingVideoFromThisPlaylist) {
+         handleClosePlayer(); // Resets player and related UI
+    } else if (ytPlayer && currentPlayingVideoFromThisPlaylist) {
+        // Video is from this playlist, ensure highlight and audio-only display are correct
+        updatePlayerRelatedUI(currentlyPlayingVideoId);
+    } else { // No player active
+        playerWrapperEl.classList.add('hidden');
+        updatePlayerRelatedUI(null); // Clear any lingering player UI state
+    }
+    
+    renderPlaylists(); // Update active item
     renderVideos();
 }
-
 function handleClearPlaylist() {
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     if (!currentPlaylist || currentPlaylist.videos.length === 0) {
-        showToast('Playlist is already empty.', 'info');
-        return;
+        showToast('Playlist is already empty.', 'info'); return;
     }
-    if (!confirm(`Are you sure you want to remove all videos from "${escapeHTML(currentPlaylist.name)}"?`)) return;
+    if (!confirm(`Remove all videos from "${currentPlaylist.name}"?`)) return;
 
     currentPlaylist.videos = [];
     savePlaylists();
-    stopVideo();
-    playerWrapperEl.classList.add('hidden');
-    renderVideos();
-    renderPlaylists();
-    showToast(`All videos removed from "${escapeHTML(currentPlaylist.name)}".`, 'info');
+    if (currentlyPlayingVideoId) handleClosePlayer(); // Close player if it was playing from this list
+    renderVideos(); // Will show empty state
+    renderPlaylists(); // Update count
+    showToast(`All videos removed from "${currentPlaylist.name}".`, 'info');
 }
-
-function handlePlaylistSearch() {
-    renderPlaylists();
-}
-
+function handlePlaylistSearch() { renderPlaylists(); }
 function handleShufflePlaylist() {
-    if (!currentPlaylistId) {
-        showToast('Please select a playlist to shuffle.', 'info');
-        return;
-    }
+    if (!currentPlaylistId) { showToast('Select a playlist to shuffle.', 'info'); return; }
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     if (!currentPlaylist || currentPlaylist.videos.length < 2) {
-        showToast('Playlist needs at least two videos to shuffle.', 'info');
-        return;
+        showToast('Playlist needs at least two videos to shuffle.', 'info'); return;
     }
-
     // Fisher-Yates Shuffle
-    let currentIndex = currentPlaylist.videos.length, randomIndex;
-    while (currentIndex !== 0) {
-        randomIndex = Math.floor(Math.random() * currentIndex);
-        currentIndex--;
-        [currentPlaylist.videos[currentIndex], currentPlaylist.videos[randomIndex]] = [
-            currentPlaylist.videos[randomIndex], currentPlaylist.videos[currentIndex]];
+    for (let i = currentPlaylist.videos.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [currentPlaylist.videos[i], currentPlaylist.videos[j]] = [currentPlaylist.videos[j], currentPlaylist.videos[i]];
     }
-
     savePlaylists();
     currentPage = 1;
     renderVideos();
-    showToast(`Playlist "${escapeHTML(currentPlaylist.name)}" shuffled!`, 'success');
+    showToast(`Playlist "${currentPlaylist.name}" shuffled!`, 'success');
+}
+function handleReorderPlaylist(playlistIdToMove, targetPlaylistId) {
+    const playlistToMoveIndex = playlists.findIndex(p => p.id === playlistIdToMove);
+    if (playlistToMoveIndex === -1) return;
+    const [playlistToMove] = playlists.splice(playlistToMoveIndex, 1);
+    const targetIndex = playlists.findIndex(p => p.id === targetPlaylistId);
+    playlists.splice(targetIndex !== -1 ? targetIndex : playlists.length, 0, playlistToMove);
+    savePlaylists();
+    renderPlaylists();
+    showToast('Playlist order updated.', 'info', 1500);
 }
 
 // --- Video Management ---
-function updatePlayingVideoHighlight(videoId) {
-    videoGridEl.querySelectorAll('.video-card.playing').forEach(card => {
-        card.classList.remove('playing');
-    });
-    if (videoId) {
-        const currentVideoCard = videoGridEl.querySelector(`.video-card[data-video-id="${videoId}"]`);
-        if (currentVideoCard) {
-            currentVideoCard.classList.add('playing');
-        }
-    }
-}
-
 async function handleAddVideo() {
     const url = videoUrlInput.value.trim();
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     if (!url) { showToast('Please enter a YouTube video URL.', 'error'); return; }
-    if (!currentPlaylist) return;
+    if (!currentPlaylist) { showToast('No playlist selected.', 'error'); return; }
 
     const videoId = extractVideoId(url);
     if (!videoId) { showToast('Invalid YouTube URL.', 'error'); videoUrlInput.focus(); return; }
-    if (currentPlaylist.videos.some(v => v.id === videoId)) { showToast(`Video is already in "${escapeHTML(currentPlaylist.name)}".`, 'info'); return; }
+    if (currentPlaylist.videos.some(v => v.id === videoId)) {
+        showToast(`Video is already in "${currentPlaylist.name}".`, 'info'); return;
+    }
 
     addVideoBtn.disabled = true;
     addVideoBtn.innerHTML = ICONS.loading + ' Adding...';
     videoUrlInput.disabled = true;
 
     try {
-        // Using noembed.com as a simple proxy
         const response = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`);
         if (!response.ok) {
-            let errorMsg = `Failed to fetch video info (HTTP ${response.status}).`;
-            try { const errData = await response.json(); errorMsg = errData.error || errorMsg; } catch (_) { }
-            throw new Error(errorMsg);
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || `Failed to fetch video info (HTTP ${response.status})`);
         }
         const data = await response.json();
-        if (data.error) { throw new Error(data.error); }
+        if (data.error) throw new Error(data.error);
 
         const video = {
             id: videoId,
             title: data.title || 'Untitled Video',
-            thumbnail: data.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`, // Fallback
+            thumbnail: data.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
             url: `https://youtu.be/${videoId}`
         };
-
         currentPlaylist.videos.push(video);
-        currentPage = Math.ceil(currentPlaylist.videos.length / videosPerPage);
+        currentPage = Math.ceil(currentPlaylist.videos.length / videosPerPage); // Go to last page
         savePlaylists();
         renderVideos();
-        renderPlaylists();
+        renderPlaylists(); // Update count
         videoUrlInput.value = '';
-        showToast(`Video "${escapeHTML(video.title)}" added.`, 'success');
-
+        showToast(`Video "${video.title}" added.`, 'success');
     } catch (error) {
         showToast(`Error adding video: ${error.message}`, 'error');
     } finally {
-        addVideoBtn.disabled = videoUrlInput.value.trim() === '';
+        addVideoBtn.disabled = videoUrlInput.value.trim() === ''; // Re-evaluate based on input
         addVideoBtn.innerHTML = ICONS.add + ' Add Video';
         videoUrlInput.disabled = false;
-        addVideoBtn.focus();
+        if (!addVideoBtn.disabled) videoUrlInput.focus(); else addVideoBtn.focus();
     }
 }
-
 function handleDeleteVideo(videoId) {
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     if (!currentPlaylist) return;
-
     const videoIndex = currentPlaylist.videos.findIndex(v => v.id === videoId);
     if (videoIndex === -1) return;
 
-    currentPlaylist.videos.splice(videoIndex, 1);
-    savePlaylists(); // Only called if a video is actually deleted
-    renderVideos();
-}
+    const deletedVideo = currentPlaylist.videos.splice(videoIndex, 1)[0];
+    savePlaylists();
+    renderVideos(); // Will adjust pagination if needed
+    renderPlaylists(); // Update count
 
+    if (videoId === currentlyPlayingVideoId) {
+        showToast(`Removed currently playing video: "${deletedVideo.title}".`, 'info');
+        handleClosePlayer(); // Close player as the video is gone
+    } else {
+        showToast(`Video "${deletedVideo.title}" removed.`, 'info');
+    }
+}
 function handleReorderVideo(videoIdToMove, targetVideoId) {
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
     if (!currentPlaylist) return;
-
     const videoToMoveIndex = currentPlaylist.videos.findIndex(v => v.id === videoIdToMove);
     if (videoToMoveIndex === -1) return;
 
     const [videoToMove] = currentPlaylist.videos.splice(videoToMoveIndex, 1);
     const targetIndex = currentPlaylist.videos.findIndex(v => v.id === targetVideoId);
-
-    if (targetIndex !== -1) {
-        // Insert before the target video's new position
-        currentPlaylist.videos.splice(targetIndex, 0, videoToMove);
-    } else {
-        // Fallback: Append to end if target not found
-        currentPlaylist.videos.push(videoToMove);
-    }
+    currentPlaylist.videos.splice(targetIndex !== -1 ? targetIndex : currentPlaylist.videos.length, 0, videoToMove);
 
     savePlaylists();
-    renderVideos();
+    renderVideos(); // Re-render current page
 }
-
 async function playVideo(videoId) {
     if (!videoId) return;
 
     try {
-        if (!isYTApiReady) {
-            await loadYouTubePlayerAPI(); // Wait for API
-        }
+        if (!isYTApiReady) await loadYouTubePlayerAPI();
 
-        // Update UI immediately
         playerWrapperEl.classList.remove('hidden');
-        updatePlayingVideoHighlight(videoId);
+        updatePlayerRelatedUI(videoId); // Update highlight, audio display, media session immediately
 
-        // Update audio-only display immediately if in audio-only mode
-        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-        const videoData = currentPlaylist?.videos.find(v => v.id === videoId);
-        if (isAudioOnlyMode && videoData) {
-            updateAudioOnlyDisplay(videoData.title);
+        if (!ytPlayer || !isPlayerReady) { // Player needs to be created or is not ready
+            if (ytPlayer && typeof ytPlayer.destroy === 'function') ytPlayer.destroy(); // Destroy old instance if exists but not ready
+            ytPlayer = createPlayer(videoId); // This will call onPlayerReady, which might autoplay
         } else {
-            updateAudioOnlyDisplay(null);
-        }
-
-        if (!ytPlayer) {
-            ytPlayer = createPlayer(videoId);
-        } else {
-            ytPlayer.loadVideoById(videoId);
-            if (userGesture) {
-                try {
-                    ytPlayer.playVideo();
-                } catch (error) {
-                    console.error("Autoplay blocked:", error);
-                    showToast('Click the play button to start the video.', 'info');
-                }
-            } else {
-                showToast('Click the play button to start the video.', 'info');
+            ytPlayer.loadVideoById(videoId); // This should autoplay due to playerVars
+            if (userGesture && typeof ytPlayer.playVideo === 'function') { // Ensure play if user has interacted
+                 try { ytPlayer.playVideo(); } catch(e) { console.warn("playVideo call failed", e); }
             }
         }
+        // Scroll player into view if it's not fully visible (especially in audio-only or after adding video)
+        if (playerWrapperEl.offsetParent !== null && !isAudioOnlyMode) {
+            playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
     } catch (error) {
         console.error("Playback error:", error);
         showToast("Failed to play video.", "error");
         handleClosePlayer();
     }
 }
-
-function stopVideo() {
+function stopVideo(clearPlayerInstance = false) {
     if (ytPlayer && typeof ytPlayer.stopVideo === 'function') {
-        try {
-            ytPlayer.stopVideo();
-        } catch (e) {
-            // Player might be destroyed already, ignore error
+        try { ytPlayer.stopVideo(); } catch (e) { /* Ignore */ }
+    }
+    const oldPlayingVideoId = currentlyPlayingVideoId;
+    currentlyPlayingVideoId = null;
+    updatePlayerRelatedUI(null); // Clears highlight, audio display, media session
+
+    if (clearPlayerInstance && ytPlayer) {
+        if (typeof ytPlayer.destroy === 'function') {
+            try { ytPlayer.destroy(); } catch (e) { console.error("Error destroying player:", e); }
+        }
+        ytPlayer = null;
+        isPlayerReady = false;
+        const playerContainer = document.getElementById('player');
+        if (playerContainer) playerContainer.innerHTML = ''; // Clear the div
+    }
+    return oldPlayingVideoId; // Return ID of video that was stopped
+}
+function handleClosePlayer() {
+    stopVideo(true); // Stop video and destroy player instance
+
+    if ('mediaSession' in navigator) { // Explicitly clear media session
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.playbackState = 'none';
+    }
+    videoIdToPlayOnReady = null;
+    playerWrapperEl.classList.add('hidden');
+}
+function playNextVideo() {
+    if (!currentPlaylistId) return;
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    if (!currentPlaylist || currentPlaylist.videos.length === 0) { handleClosePlayer(); return; }
+
+    let nextVideoId = null;
+    if (!currentlyPlayingVideoId && currentPlaylist.videos.length > 0) {
+        nextVideoId = currentPlaylist.videos[0].id; // Play first if nothing was playing
+    } else {
+        const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
+        if (currentIndex === -1 || currentIndex >= currentPlaylist.videos.length - 1) { // Not found or last video
+            if (currentPlaylist.videos.length > 0) { // Loop to first video
+                 nextVideoId = currentPlaylist.videos[0].id;
+            } else {
+                 handleClosePlayer(); return;
+            }
+        } else {
+            nextVideoId = currentPlaylist.videos[currentIndex + 1].id;
         }
     }
-    currentlyPlayingVideoId = null;
-    updatePlayingVideoHighlight(null);
-    updateAudioOnlyDisplay(null);
-    updateMediaSessionMetadata(null);
-    // Let onPlayerStateChange or handleClosePlayer manage MediaSession state.
+    if (nextVideoId) playVideo(nextVideoId); else handleClosePlayer();
 }
+function playPreviousVideo() {
+    if (!currentPlaylistId) return;
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    if (!currentPlaylist || currentPlaylist.videos.length === 0) { handleClosePlayer(); return; }
 
-function extractVideoId(url) {
-    const regex = /(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
-    const match = url.match(regex);
-    return match ? match[1] : null;
+    let prevVideoId = null;
+    if (!currentlyPlayingVideoId && currentPlaylist.videos.length > 0) {
+        prevVideoId = currentPlaylist.videos[currentPlaylist.videos.length - 1].id; // Play last if nothing was playing
+    } else {
+        const currentIndex = currentPlaylist.videos.findIndex(v => v.id === currentlyPlayingVideoId);
+        if (currentIndex === -1 || currentIndex === 0) { // Not found or first video
+            if (currentPlaylist.videos.length > 0) { // Loop to last video
+                prevVideoId = currentPlaylist.videos[currentPlaylist.videos.length - 1].id;
+            } else {
+                handleClosePlayer(); return;
+            }
+        } else {
+            prevVideoId = currentPlaylist.videos[currentIndex - 1].id;
+        }
+    }
+    if (prevVideoId) playVideo(prevVideoId); else handleClosePlayer();
 }
 
 // --- Rendering ---
@@ -917,98 +878,91 @@ function renderPlaylists() {
     if (filteredPlaylists.length === 0) {
         playlistListEl.innerHTML = '';
         noPlaylistsMessageEl.classList.remove('hidden');
-        noPlaylistsMessageEl.textContent = searchTerm ? 'No playlists match your search.' : 'No playlists created yet.';
+        noPlaylistsMessageEl.textContent = searchTerm ? 'No playlists match search.' : 'No playlists yet.';
     } else {
         noPlaylistsMessageEl.classList.add('hidden');
-        playlistListEl.innerHTML = '';
         const fragment = document.createDocumentFragment();
         filteredPlaylists.forEach(playlist => {
             const li = document.createElement('li');
             li.className = `playlist-item ${playlist.id === currentPlaylistId ? 'active' : ''}`;
             li.dataset.id = playlist.id;
             li.draggable = true;
-            li.innerHTML = `
-                        <span class="playlist-name">${escapeHTML(playlist.name)}</span>
-                        <span class="playlist-count">${playlist.videos.length}</span>
-                        <div class="controls">
-                            <button class="icon-button rename-btn" title="Rename Playlist">
-                                ${ICONS.rename}
-                                <span class="visually-hidden">Rename ${escapeHTML(playlist.name)}</span>
-                            </button>
-                            <button class="icon-button delete-btn" title="Delete Playlist">
-                                ${ICONS.delete}
-                                <span class="visually-hidden">Delete ${escapeHTML(playlist.name)}</span>
-                            </button>
-                        </div>
-                    `;
+            // Use textContent for names to prevent XSS if names could somehow contain HTML
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'playlist-name';
+            nameSpan.textContent = playlist.name;
+
+            const countSpan = document.createElement('span');
+            countSpan.className = 'playlist-count';
+            countSpan.textContent = playlist.videos.length;
+
+            li.appendChild(nameSpan);
+            li.appendChild(countSpan);
+            li.innerHTML += `
+                <div class="controls">
+                    <button class="icon-button rename-btn" title="Rename Playlist">
+                        ${ICONS.rename}<span class="visually-hidden">Rename ${playlist.name}</span>
+                    </button>
+                    <button class="icon-button delete-btn" title="Delete Playlist">
+                        ${ICONS.delete}<span class="visually-hidden">Delete ${playlist.name}</span>
+                    </button>
+                </div>`;
             fragment.appendChild(li);
         });
+        playlistListEl.innerHTML = ''; // Clear before append
         playlistListEl.appendChild(fragment);
     }
 }
-
 function renderVideos() {
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-
     if (!currentPlaylist || currentPlaylist.videos.length === 0) {
-        videoGridEl.innerHTML = ''; // Clear grid
-        paginationControlsEl.classList.add('hidden'); // Hide pagination if no videos
-        videoPlaceholderEl.textContent = currentPlaylist ? `Playlist "${escapeHTML(currentPlaylist.name)}" is empty. Add some videos!` : 'Select or create a playlist.';
+        videoGridEl.innerHTML = '';
+        paginationControlsEl.classList.add('hidden');
+        videoPlaceholderEl.textContent = currentPlaylist ? `Playlist "${currentPlaylist.name}" is empty.` : 'Select or create a playlist.';
         videoPlaceholderEl.classList.remove('hidden');
         return;
     }
 
-    // --- Pagination Logic ---
     const totalVideos = currentPlaylist.videos.length;
     const totalPages = Math.ceil(totalVideos / videosPerPage);
-
-    // Ensure currentPage is valid (e.g., after deletion)
-    if (currentPage > totalPages && totalPages > 0) {
-        currentPage = totalPages;
-    } else if (totalPages === 0) {
-        currentPage = 1; // Should be handled by the empty check above, but safety first
-    }
+    if (currentPage > totalPages && totalPages > 0) currentPage = totalPages;
+    else if (totalPages === 0) currentPage = 1;
 
     const startIndex = (currentPage - 1) * videosPerPage;
-    const endIndex = startIndex + videosPerPage;
-    const videosToRender = currentPlaylist.videos.slice(startIndex, endIndex);
-    // --- End Pagination Logic ---
+    const videosToRender = currentPlaylist.videos.slice(startIndex, startIndex + videosPerPage);
 
-    videoPlaceholderEl.classList.add('hidden'); // Hide placeholder
-    videoGridEl.innerHTML = ''; // Clear existing grid content
-    const fragment = document.createDocumentFragment(); // Create a fragment
-
+    videoPlaceholderEl.classList.add('hidden');
+    const fragment = document.createDocumentFragment();
     videosToRender.forEach(video => {
-        const div = document.createElement('div');
-        div.className = 'video-card';
-        div.dataset.videoId = video.id;
-        div.draggable = true;
-        div.innerHTML = `
-            <div class="video-card" data-video-id="${video.id}" draggable="true">
-                <div class="thumbnail-wrapper">
-                    <img src="${escapeHTML(video.thumbnail)}" class="thumbnail" alt="" loading="lazy">
-                </div>
-                <div class="video-info">
-                     <h4>${escapeHTML(video.title)}</h4>
-                     <div class="video-controls">
-                         <span class="drag-handle" title="Drag to reorder">
-                            ${ICONS.drag}
-                            <span class="visually-hidden">Drag to reorder ${escapeHTML(video.title)}</span>
-                         </span>
-                         <button class="icon-button delete-video-btn" title="Remove from playlist">
-                            ${ICONS.delete}
-                            <span class="visually-hidden">Remove ${escapeHTML(video.title)} from playlist</span>
-                         </button>
-                     </div>
-                </div>
+        const card = document.createElement('div');
+        card.className = 'video-card';
+        if (video.id === currentlyPlayingVideoId) card.classList.add('playing');
+        card.dataset.videoId = video.id;
+        card.draggable = true;
+
+        // Using textContent for title for security and correctness
+        const titleEl = document.createElement('h4');
+        titleEl.textContent = video.title;
+
+        card.innerHTML = `
+            <div class="thumbnail-wrapper">
+                <img src="${escapeHTML(video.thumbnail)}" class="thumbnail" alt="" loading="lazy">
             </div>
-        `;
-        fragment.appendChild(div.firstElementChild);
+            <div class="video-info">
+                 ${titleEl.outerHTML}
+                 <div class="video-controls">
+                     <span class="drag-handle" title="Drag to reorder">
+                        ${ICONS.drag}<span class="visually-hidden">Drag to reorder ${video.title}</span>
+                     </span>
+                     <button class="icon-button delete-video-btn" title="Remove from playlist">
+                        ${ICONS.delete}<span class="visually-hidden">Remove ${video.title} from playlist</span>
+                     </button>
+                 </div>
+            </div>`;
+        fragment.appendChild(card);
     });
-
-    videoGridEl.appendChild(fragment); // Append the fragment to the DOM once
-
-    // Render pagination controls after rendering videos
+    videoGridEl.innerHTML = '';
+    videoGridEl.appendChild(fragment);
     renderPaginationControls(totalVideos, totalPages);
 }
 
@@ -1016,544 +970,223 @@ function renderVideos() {
 function updateUIForNoSelection() {
     currentPlaylistId = null;
     saveLastSelectedPlaylist(null);
-
     currentPlaylistTitleEl.textContent = 'No playlist selected';
     videoFormEl.classList.add('hidden');
     playlistActionsEl.classList.add('hidden');
     addVideoBtn.disabled = true;
     videoGridEl.innerHTML = '';
-    playerWrapperEl.classList.add('hidden');
-    stopVideo();
-    videoPlaceholderEl.textContent = 'Create or select a playlist to get started.';
+    paginationControlsEl.classList.add('hidden');
+    if (ytPlayer) handleClosePlayer(); // Close player if one was active
+    else playerWrapperEl.classList.add('hidden'); // Ensure it's hidden if no player
+    updatePlayerRelatedUI(null); // Clear any player-related UI like audio info
+    videoPlaceholderEl.textContent = 'Create or select a playlist.';
     videoPlaceholderEl.classList.remove('hidden');
-
-    renderPlaylists(); // Ensure playlist list is updated (e.g., no active item)
+    renderPlaylists();
 }
-
-function handleAutoplayToggle() {
-    isAutoplayEnabled = autoplayToggle.checked;
-    saveAutoplaySetting();
-    showToast(`Autoplay ${isAutoplayEnabled ? 'enabled' : 'disabled'}.`, 'info');
-}
-
-// Added handler for the new toggle
-function handleAudioOnlyToggle() {
-    isAudioOnlyMode = audioOnlyToggle.checked;
-    saveAudioOnlySetting();
-    applyAudioOnlyClass(); // Apply/remove the class immediately
-    showToast(`Audio-Only Mode ${isAudioOnlyMode ? 'enabled' : 'disabled'}.`, 'info');
-
-    // If a video is currently playing, adjust visibility/scrolling and update display
-    if (currentlyPlayingVideoId) {
-        const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-        const videoData = currentPlaylist?.videos.find(v => v.id === currentlyPlayingVideoId);
-        const videoTitle = videoData ? videoData.title : null;
-
-        if (isAudioOnlyMode) {
-            // Update and show the info display
-            updateAudioOnlyDisplay(videoTitle);
-            playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible
-        } else {
-            // Hide the info display
-            updateAudioOnlyDisplay(null);
-            // Show video and scroll into view if it was hidden
-            playerWrapperEl.classList.remove('hidden');
-            setTimeout(() => {
-                 if (playerWrapperEl.offsetParent !== null) {
-                    playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                 }
-            }, 100);
-        }
-    } else {
-        // If no video playing, ensure player wrapper is hidden if audio-only is disabled
-        // and no video is selected to play next. Also clear audio display.
-        updateAudioOnlyDisplay(null);
-         if (!isAudioOnlyMode && !videoIdToPlayOnReady) {
-            playerWrapperEl.classList.add('hidden');
-         }
+function updatePlayingVideoHighlight(videoId) {
+    videoGridEl.querySelectorAll('.video-card.playing').forEach(card => card.classList.remove('playing'));
+    if (videoId) {
+        const currentVideoCard = videoGridEl.querySelector(`.video-card[data-video-id="${videoId}"]`);
+        if (currentVideoCard) currentVideoCard.classList.add('playing');
     }
 }
-
-// --- Import / Export ---
-function handleExportPlaylists() {
-    if (playlists.length === 0) {
-        showToast('No playlists to export.', 'info');
-        return;
-    }
-    try {
-        const dataStr = JSON.stringify(playlists, null, 2); // Pretty print JSON
-        const dataBlob = new Blob([dataStr], { type: "application/json" });
-        const url = URL.createObjectURL(dataBlob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `playlists_backup_${new Date().toISOString().split('T')[0]}.json`; // YYYY-MM-DD
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        showToast('Playlists exported successfully!', 'success');
-    } catch (error) {
-        console.error("Export error:", error);
-        showToast('Failed to export playlists.', 'error');
-    }
-}
-
-function handleImportPlaylists(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        try {
-            const importedData = JSON.parse(e.target.result);
-            // Basic validation: Is it an array? Does it look like playlists?
-            if (!Array.isArray(importedData) || (importedData.length > 0 && typeof importedData[0].id === 'undefined')) {
-                throw new Error("Invalid file format. Expected an array of playlists.");
-            }
-
-            // Merge or replace? Ask user? For simplicity, let's merge and avoid duplicates by ID.
-            const existingIds = new Set(playlists.map(p => p.id));
-            let addedCount = 0;
-            let skippedCount = 0;
-
-            importedData.forEach(importedPlaylist => {
-                // Basic validation of playlist structure
-                if (importedPlaylist && typeof importedPlaylist.id !== 'undefined' && typeof importedPlaylist.name === 'string') {
-                    // Ensure videos array exists and has basic structure
-                    if (!Array.isArray(importedPlaylist.videos)) importedPlaylist.videos = [];
-                    importedPlaylist.videos = importedPlaylist.videos.filter(v => v && typeof v.id === 'string' && typeof v.title === 'string');
-
-                    if (!existingIds.has(importedPlaylist.id)) {
-                        playlists.push(importedPlaylist);
-                        existingIds.add(importedPlaylist.id);
-                        addedCount++;
-                    } else {
-                        skippedCount++;
-                        // Optionally implement merging logic here (e.g., update existing)
-                    }
-                } else {
-                    skippedCount++; // Skip malformed playlist entries
-                }
-            });
-
-            savePlaylists();
-            playlistSearchInput.value = ''; // Clear search after import
-            renderPlaylists();
-            showToast(`Imported ${addedCount} playlists. Skipped ${skippedCount} duplicates or invalid entries.`, 'success');
-            // Select the first imported playlist if none was selected before
-            if (!currentPlaylistId && playlists.length > 0) {
-                selectPlaylist(playlists[0].id);
-            }
-
-        } catch (error) {
-            console.error("Import error:", error);
-            showToast(`Import failed: ${error.message}`, 'error');
-        } finally {
-            // Reset file input value to allow importing the same file again
-            importFileEl.value = '';
-        }
-    };
-    reader.onerror = () => {
-        showToast('Error reading file.', 'error');
-        importFileEl.value = '';
-    };
-    reader.readAsText(file);
-}
-
-function handleVisualSwitchClick(event) {
-    const switchElement = event.target.closest('.switch');
-    if (!switchElement) return;
-    const checkbox = switchElement.querySelector('input[type="checkbox"]');
-    if (checkbox && event.target !== checkbox) {
-        checkbox.click();
-    }
-}
-
-// --- Utility ---
-
-// Create a reusable element for HTML escaping
-const escapeElement = document.createElement('div');
-
-function escapeHTML(str) {
-    if (typeof str !== 'string') return '';
-    // Use the pre-created element
-    escapeElement.textContent = str;
-    return escapeElement.innerHTML;
-}
-
-let toastTimeout = null;
-function showToast(message, type = 'info', duration = 3000) {
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`; // type can be 'info', 'success', 'error'
-
-    let icon = ICONS.info;
-    if (type === 'success') icon = ICONS.success;
-    if (type === 'error') icon = ICONS.error;
-
-    toast.innerHTML = `
-                ${icon}
-                <span>${escapeHTML(message)}</span>
-            `;
-    toastContainerEl.appendChild(toast);
-
-    // Trigger animation
-    setTimeout(() => toast.classList.add('show'), 10); // Small delay for transition
-
-    // Auto-dismiss
-    const timeoutId = setTimeout(() => {
-        toast.classList.remove('show');
-        // Remove from DOM after transition
-        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
-    }, duration);
-
-    // Allow manual dismiss
-    toast.addEventListener('click', () => {
-        clearTimeout(timeoutId);
-        toast.classList.remove('show');
-        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
-    });
-}
-
-function handleClosePlayer() {
-    stopVideo(); // stopVideo now primarily handles player stop/state, not destruction
-
-    // Explicitly clear media session here
-    if ('mediaSession' in navigator) {
-        console.log("Media Session: Clearing metadata and state due to player close.");
-        navigator.mediaSession.metadata = null;
-        navigator.mediaSession.playbackState = 'none';
-        // Remove action handlers? Maybe not needed if metadata is null.
-        // setupMediaSessionActionHandlers(); // Call with null? Let's see if clearing metadata is enough.
-    }
-
-    if (ytPlayer && typeof ytPlayer.destroy === 'function') {
-        try {
-            console.log("Destroying YT Player instance.");
-            ytPlayer.destroy();
-        } catch (e) {
-            console.error("Error destroying player:", e);
-        } finally {
-            ytPlayer = null; // Nullify the reference AFTER destroying
-            isPlayerReady = false;
-            // Clean up any remaining elements in the player container
-            const playerContainer = document.getElementById('player');
-            if (playerContainer) {
-                playerContainer.innerHTML = '';
-            }
-        }
-    } else {
-        // Ensure state is reset even if player wasn't fully initialized or already destroyed
-        ytPlayer = null;
-        isPlayerReady = false;
-    }
-
-    videoIdToPlayOnReady = null;
-    playerWrapperEl.classList.add('hidden');
-    updatePlayingVideoHighlight(null);
-    updateAudioOnlyDisplay(null);
-
-}
-
-function renderPaginationControls(totalVideos, totalPages) {
-    if (totalVideos <= videosPerPage) {
-        paginationControlsEl.classList.add('hidden');
-        return;
-    }
-
-    paginationControlsEl.classList.remove('hidden');
-    pageInfoEl.textContent = `Page ${currentPage} of ${totalPages}`;
-    prevPageBtn.disabled = currentPage === 1;
-    nextPageBtn.disabled = currentPage === totalPages;
-}
-
-// --- Utility ---
-
-// Debounce function: prevents function from running too often
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-};
-
-// --- Media Session API Integration ---
-
-function updateMediaSessionMetadata(video) {
-    if (!('mediaSession' in navigator)) return;
-
-    try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-            title: video?.title || 'Untitled Video',
-            artist: 'YouTube',
-            album: playlists.find(p => p.id === currentPlaylistId)?.name || 'Playlist',
-            artwork: [
-                { src: video?.thumbnail?.replace('mqdefault', 'hqdefault') || '', sizes: '480x360', type: 'image/jpeg' },
-                { src: video?.thumbnail || '', sizes: '320x180', type: 'image/jpeg' }
-            ]
-        });
-
-        // Must set handlers AFTER metadata
-        setupMediaSessionActionHandlers();
-    } catch (error) {
-        console.error("MediaSession error:", error);
-    }
-}
-
-function setupMediaSessionActionHandlers() {
-    if (!('mediaSession' in navigator)) return;
-
-    try {
-        navigator.mediaSession.setActionHandler('play', () => {
-            ytPlayer?.playVideo?.();
-        });
-
-        navigator.mediaSession.setActionHandler('pause', () => {
-            ytPlayer?.pauseVideo?.();
-        });
-
-        // Include all standard handlers
-        const handlers = {
-            'previoustrack': playPreviousVideo,
-            'nexttrack': () => isAutoplayEnabled && playNextVideo(),
-            'stop': handleClosePlayer
-        };
-
-        Object.entries(handlers).forEach(([action, handler]) => {
-            navigator.mediaSession.setActionHandler(action, handler);
-        });
-    } catch (error) {
-        console.error("Failed to set media action handlers:", error);
-    }
-}
-
-// --- End Media Session API Integration ---
-
-// --- Drag and Drop (Playlists) ---
-let draggedPlaylistId = null;
-let dragTargetPlaylistElement = null;
-
-function handlePlaylistDragStart(event) {
-    const playlistItem = event.target.closest('.playlist-item');
-    if (playlistItem && playlistItem.draggable) {
-        // Prevent dragging if clicking on controls inside the item
-        if (event.target.closest('.controls')) {
-            event.preventDefault();
-            return;
-        }
-        draggedPlaylistId = parseInt(playlistItem.dataset.id);
-        event.dataTransfer.effectAllowed = 'move';
-        // event.dataTransfer.setData('text/plain', draggedPlaylistId); // Optional
-        setTimeout(() => playlistItem.classList.add('dragging'), 0);
-        dragTargetPlaylistElement = null; // Reset target
-    }
-}
-
-function handlePlaylistDragEnd(event) {
-    const playlistItem = event.target.closest('.playlist-item.dragging');
-    if (playlistItem) {
-        playlistItem.classList.remove('dragging');
-    }
-    clearPlaylistDragOverStyles();
-    draggedPlaylistId = null;
-    dragTargetPlaylistElement = null;
-}
-
-function handlePlaylistDragOver(event) {
-    event.preventDefault();
-    if (!draggedPlaylistId) return;
-    event.dataTransfer.dropEffect = 'move';
-
-    const targetItem = event.target.closest('.playlist-item');
-    if (targetItem && targetItem.draggable && parseInt(targetItem.dataset.id) !== draggedPlaylistId) {
-        clearPlaylistDragOverStyles();
-        targetItem.classList.add('drag-over');
-        dragTargetPlaylistElement = targetItem;
-    } else {
-        event.dataTransfer.dropEffect = 'none';
-    }
-}
-
-function handlePlaylistDragLeave(event) {
-    // Clear styles only if leaving the list container bounds
-    if (!event.relatedTarget || !playlistListEl.contains(event.relatedTarget)) {
-        clearPlaylistDragOverStyles();
-        dragTargetPlaylistElement = null;
-    }
-}
-
-function handlePlaylistDrop(event) {
-    event.preventDefault();
-    if (draggedPlaylistId && dragTargetPlaylistElement) {
-        const dropTargetId = parseInt(dragTargetPlaylistElement.dataset.id);
-        if (dropTargetId !== draggedPlaylistId) {
-            handleReorderPlaylist(draggedPlaylistId, dropTargetId);
-        }
-    }
-    clearPlaylistDragOverStyles();
-}
-
-function clearPlaylistDragOverStyles() {
-    const highlightedItem = playlistListEl.querySelector('.playlist-item.drag-over');
-    if (highlightedItem) {
-        highlightedItem.classList.remove('drag-over');
-    }
-     if (dragTargetPlaylistElement) {
-         dragTargetPlaylistElement.classList.remove('drag-over');
-     }
-}
-
-function handleReorderPlaylist(playlistIdToMove, targetPlaylistId) {
-    const playlistToMoveIndex = playlists.findIndex(p => p.id === playlistIdToMove);
-    if (playlistToMoveIndex === -1) return;
-
-    const [playlistToMove] = playlists.splice(playlistToMoveIndex, 1); // Remove the playlist
-
-    // Find the target's NEW index after the splice
-    const targetIndex = playlists.findIndex(p => p.id === targetPlaylistId);
-
-    if (targetIndex !== -1) {
-        // Insert before the target's new position
-        playlists.splice(targetIndex, 0, playlistToMove);
-    } else {
-        // Fallback: append to end if target not found (shouldn't happen in valid drop)
-        console.warn("Playlist reorder target not found after splice, appending to end.");
-        playlists.push(playlistToMove);
-    }
-
-    savePlaylists();
-    renderPlaylists(); // Re-render the list with the new order
-    showToast('Playlist order updated.', 'info', 1500); // Short confirmation
-}
-
-// --- Touch Event Handlers for Video Drag/Drop ---
-
-function handleTouchStart(event) {
-    const videoCard = event.target.closest('.video-card');
-    if (!videoCard || !videoCard.draggable) return;
-    
-    // Don't prevent default on buttons/controls
-    if (event.target.closest('button') || 
-        event.target.closest('.delete-video-btn') || 
-        event.target.closest('.controls')) {
-        return;
-    }
-    
-    // Only prevent default for drag handles to allow normal scrolling
-    if (event.target.closest('.drag-handle')) {
-        event.preventDefault();
-        
-        touchDraggedElement = videoCard;
-        draggedVideoId = videoCard.dataset.videoId;
-        isTouchDragging = true;
-        touchDragStartY = event.touches[0].clientY;
-        
-        requestAnimationFrame(() => {
-            if (isTouchDragging && touchDraggedElement) {
-                touchDraggedElement.classList.add('dragging');
-            }
-        });
-        
-        potentialPlayVideoId = null;
-        potentialPlayCard = null;
-    } else {
-        // For potential play, store ID but don't prevent scrolling
-        potentialPlayVideoId = videoCard.dataset.videoId;
-        potentialPlayCard = videoCard;
-        videoCard.classList.add('touch-active');
-    }
-}
-
-function handleTouchMove(event) {
-    if (isTouchDragging) {
-        if (!touchDraggedElement) return;
-        event.preventDefault();
-
-        const touch = event.touches[0];
-        const elementUnderTouch = document.elementFromPoint(touch.clientX, touch.clientY);
-        const targetCard = elementUnderTouch ? elementUnderTouch.closest('.video-card') : null;
-
-        if (targetCard && targetCard.draggable && targetCard !== touchDraggedElement) {
-            if (dragTargetElement) dragTargetElement.classList.remove('drag-over');
-            targetCard.classList.add('drag-over');
-            dragTargetElement = targetCard;
-        }
-    } else if (potentialPlayVideoId && potentialPlayCard) {
-        potentialPlayCard.classList.remove('touch-active');
-        potentialPlayVideoId = null;
-        potentialPlayCard = null;
-    }
-}
-
-function handleTouchEnd(event) {
-    if (isTouchDragging) {
-        if (draggedVideoId && dragTargetElement && dragTargetElement.dataset.videoId !== draggedVideoId) {
-            handleReorderVideo(draggedVideoId, dragTargetElement.dataset.videoId);
-        }
-        if (touchDraggedElement) touchDraggedElement.classList.remove('dragging');
-        clearDragOverStyles();
-        isTouchDragging = false;
-        touchDraggedElement = null;
-        draggedVideoId = null;
-        dragTargetElement = null;
-        touchDragStartY = 0;
-    } else if (potentialPlayVideoId && potentialPlayCard) {
-        playVideo(potentialPlayVideoId);
-        potentialPlayCard.classList.remove('touch-active');
-    } else if (potentialPlayCard) {
-        potentialPlayCard.classList.remove('touch-active');
-    }
-    potentialPlayVideoId = null;
-    potentialPlayCard = null;
-}
-
-// --- Start the app ---
-init();
-
-// Function to update the audio-only info display
 function updateAudioOnlyDisplay(videoTitle) {
     if (isAudioOnlyMode && videoTitle) {
-        // Using both textContent and innerHTML is redundant
         audioOnlyTitleEl.textContent = videoTitle;
-        escapeElement.textContent = videoTitle;
-        audioOnlyTitleEl.innerHTML = escapeElement.innerHTML;
         audioOnlyInfoEl.classList.remove('hidden');
     } else {
         audioOnlyTitleEl.textContent = '';
         audioOnlyInfoEl.classList.add('hidden');
     }
 }
-
-// Combine similar functions
-function updateVideoUI(videoId) {
+function updatePlayerRelatedUI(videoId) {
     updatePlayingVideoHighlight(videoId);
-    if (videoId) {
-        const video = getCurrentVideo(videoId);
-        updateMediaSessionMetadata(video);
-        updateAudioOnlyDisplay(video?.title);
-    } else {
-        updateAudioOnlyDisplay(null);
-        updateMediaSessionMetadata(null);
+    const video = videoId ? getCurrentVideo(videoId) : null;
+    updateMediaSessionMetadata(video);
+    updateAudioOnlyDisplay(video?.title);
+}
+function handleAutoplayToggle() {
+    isAutoplayEnabled = autoplayToggle.checked;
+    saveAutoplaySetting();
+    showToast(`Autoplay ${isAutoplayEnabled ? 'enabled' : 'disabled'}.`, 'info');
+}
+function handleAudioOnlyToggle() {
+    isAudioOnlyMode = audioOnlyToggle.checked;
+    saveAudioOnlySetting();
+    applyAudioOnlyClass();
+    showToast(`Audio-Only Mode ${isAudioOnlyMode ? 'enabled' : 'disabled'}.`, 'info');
+
+    const currentVideo = getCurrentVideo(currentlyPlayingVideoId);
+    updateAudioOnlyDisplay(currentVideo?.title); // Update based on new mode
+
+    if (ytPlayer) { // If player is active
+        playerWrapperEl.classList.remove('hidden'); // Ensure wrapper is visible
+        if (!isAudioOnlyMode && playerWrapperEl.offsetParent !== null) {
+            // If switching from audio-only to video, scroll player into view
+            setTimeout(() => playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+        }
+    } else if (!isAudioOnlyMode && !videoIdToPlayOnReady) {
+        // If no video playing/queued and audio-only disabled, hide wrapper
+        playerWrapperEl.classList.add('hidden');
     }
 }
-
-// Replace redundant keypress and click handlers with a single function
-function setupInputListeners(input, button, handler) {
-    input.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') handler();
-    });
-    button.addEventListener('click', handler);
+function renderPaginationControls(totalVideos, totalPages) {
+    if (totalVideos <= videosPerPage) {
+        paginationControlsEl.classList.add('hidden');
+        return;
+    }
+    paginationControlsEl.classList.remove('hidden');
+    pageInfoEl.textContent = `Page ${currentPage} of ${totalPages}`;
+    prevPageBtn.disabled = currentPage === 1;
+    nextPageBtn.disabled = currentPage === totalPages;
 }
 
-// Usage:
-setupInputListeners(playlistNameInput, createPlaylistBtn, handleCreatePlaylist);
-setupInputListeners(videoUrlInput, addVideoBtn, handleAddVideo);
+// --- Import / Export ---
+function handleExportPlaylists() {
+    if (playlists.length === 0) { showToast('No playlists to export.', 'info'); return; }
+    try {
+        const dataStr = JSON.stringify(playlists, null, 2);
+        const dataBlob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `playlists_backup_${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        URL.revokeObjectURL(url); // Clean up
+        showToast('Playlists exported successfully!', 'success');
+    } catch (error) {
+        console.error("Export error:", error);
+        showToast('Failed to export playlists.', 'error');
+    }
+}
+function handleImportPlaylists(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const importedData = JSON.parse(e.target.result);
+            if (!Array.isArray(importedData)) throw new Error("Invalid file: Not an array.");
 
-// Add the isIOS function
+            const existingIds = new Set(playlists.map(p => p.id));
+            let addedCount = 0, skippedCount = 0;
+
+            importedData.forEach(p => {
+                if (p && typeof p.id !== 'undefined' && typeof p.name === 'string') {
+                    if (!Array.isArray(p.videos)) p.videos = [];
+                    p.videos = p.videos.filter(v => v && v.id && v.title); // Basic video validation
+                    if (!existingIds.has(p.id)) {
+                        playlists.push(p);
+                        existingIds.add(p.id);
+                        addedCount++;
+                    } else skippedCount++;
+                } else skippedCount++;
+            });
+            savePlaylists();
+            playlistSearchInput.value = '';
+            renderPlaylists();
+            showToast(`Imported ${addedCount} playlists. Skipped ${skippedCount}.`, 'success');
+            if (!currentPlaylistId && playlists.length > 0) selectPlaylist(playlists[0].id);
+        } catch (error) {
+            console.error("Import error:", error);
+            showToast(`Import failed: ${error.message}`, 'error');
+        } finally {
+            importFileEl.value = ''; // Reset file input
+        }
+    };
+    reader.onerror = () => { showToast('Error reading file.', 'error'); importFileEl.value = ''; };
+    reader.readAsText(file);
+}
+
+// --- Utility Functions ---
+function escapeHTML(str) {
+    if (typeof str !== 'string') return '';
+    escapeElement.textContent = str;
+    return escapeElement.innerHTML;
+}
+function showToast(message, type = 'info', duration = 3000) {
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    let icon = ICONS.info;
+    if (type === 'success') icon = ICONS.success;
+    else if (type === 'error') icon = ICONS.error;
+    toast.innerHTML = `${icon}<span>${escapeHTML(message)}</span>`; // Message is escaped here
+    toastContainerEl.appendChild(toast);
+
+    setTimeout(() => toast.classList.add('show'), 10);
+    const timeoutId = setTimeout(() => {
+        toast.classList.remove('show');
+        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+    }, duration);
+    toast.addEventListener('click', () => {
+        clearTimeout(timeoutId);
+        toast.classList.remove('show');
+        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+    }, { once: true });
+}
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => { clearTimeout(timeout); func(...args); };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+function extractVideoId(url) {
+    const regex = /(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+    const match = url.match(regex);
+    return match ? match[1] : null;
+}
+function handleVisualSwitchClick(event) {
+    const switchElement = event.target.closest('.switch');
+    const checkbox = switchElement?.querySelector('input[type="checkbox"]');
+    if (checkbox && event.target !== checkbox) checkbox.click();
+}
 function isIOS() {
     return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
+
+// --- Media Session API Integration ---
+function updateMediaSessionMetadata(video) {
+    if (!('mediaSession' in navigator)) return;
+    try {
+        if (video) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: video.title || 'Untitled Video',
+                artist: 'YouTube', // Or extract channel if available
+                album: playlists.find(p => p.id === currentPlaylistId)?.name || 'Playlist',
+                artwork: [
+                    { src: video.thumbnail?.replace('mqdefault', 'hqdefault') || '', sizes: '480x360', type: 'image/jpeg' },
+                    { src: video.thumbnail || '', sizes: '320x180', type: 'image/jpeg' }
+                ]
+            });
+        } else {
+            navigator.mediaSession.metadata = null;
+        }
+        // Handlers should be set once, or re-set if player instance changes
+        // For simplicity, setting them here ensures they are active when metadata is set.
+        setupMediaSessionActionHandlers();
+    } catch (error) {
+        console.warn("MediaSession metadata error:", error);
+    }
+}
+function setupMediaSessionActionHandlers() {
+    if (!('mediaSession' in navigator)) return;
+    const actions = {
+        'play': () => ytPlayer?.playVideo?.(),
+        'pause': () => ytPlayer?.pauseVideo?.(),
+        'previoustrack': playPreviousVideo,
+        'nexttrack': () => { if (isAutoplayEnabled) playNextVideo(); },
+        'stop': handleClosePlayer // Or just ytPlayer?.stopVideo?.() if you don't want full close
+    };
+    for (const [action, handler] of Object.entries(actions)) {
+        try {
+            navigator.mediaSession.setActionHandler(action, handler);
+        } catch (error) {
+            console.warn(`Failed to set media action handler for ${action}:`, error);
+        }
+    }
+}
+
+// --- Start the app ---
+init();
