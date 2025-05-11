@@ -898,7 +898,6 @@ function renderPlaylists() {
                 <div class="controls">
                     <button class="icon-button rename-btn" title="Rename Playlist">${ICONS.rename}<span class="visually-hidden">Rename</span></button>
                     <button class="icon-button delete-btn" title="Delete Playlist">${ICONS.delete}<span class="visually-hidden">Delete</span></button>
-                    ${isDesktop ? `<span class="playlist-drag-handle" title="Drag to reorder">${ICONS.drag}</span>` : ''}
                 </div>`;
             fragment.appendChild(li);
         });
