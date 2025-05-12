@@ -52,6 +52,9 @@ let touchDraggedElement = null;
 const videosPerPage = 20;
 let currentPage = 1;
 let isAudioOnlyMode = false;
+let isYTApiReady = false;
+let savePlaylistsTimeout = null;
+let lazyImageObserver = null;
 
 // Icons
 const ICONS = {
@@ -92,14 +95,22 @@ function init() {
 
 // Sidebar Resizing
 function loadSidebarWidth() {
-    const savedWidth = localStorage.getItem('sidebarWidth');
-    if (savedWidth) {
-        sidebarEl.style.width = savedWidth + 'px';
+    try {
+        const savedWidth = localStorage.getItem('sidebarWidth');
+        if (savedWidth) {
+            sidebarEl.style.width = savedWidth + 'px';
+        }
+    } catch (e) {
+        console.error("Error loading sidebar width:", e);
     }
 }
 
 function saveSidebarWidth(width) {
-    localStorage.setItem('sidebarWidth', width);
+    try {
+        localStorage.setItem('sidebarWidth', width);
+    } catch (e) {
+        console.error("Error saving sidebar width:", e);
+    }
 }
 
 function initSidebarResize(e) {
@@ -414,19 +425,11 @@ function updateThemeIcon() {
 
 // YouTube Player API
 function onYouTubeIframeAPIReady() {
-    if (document.getElementById('player')) {
-        ytPlayer = new YT.Player('player', {
-            height: '100%',
-            width: '100%',
-            playerVars: { 'playsinline': 1, 'rel': 0, 'enablejsapi': 1, 'autoplay': 1 },
-            events: {
-                'onReady': onPlayerReady,
-                'onStateChange': onPlayerStateChange,
-                'onError': onPlayerError
-            }
-        });
-    } else {
-        console.warn("Player element ('#player') not found when YouTube API was ready.");
+    console.log("YouTube IFrame API Ready.");
+    isYTApiReady = true;
+
+    if (videoIdToPlayOnReady) {
+        playVideo(videoIdToPlayOnReady);
     }
 }
 
@@ -529,19 +532,40 @@ function playNextVideo() {
 
 // Local Storage & State Persistence
 function savePlaylists() {
-    try {
-        localStorage.setItem('playlists', JSON.stringify(playlists));
-    } catch (e) {
-        console.error("Error saving playlists to localStorage:", e);
-        showToast("Failed to save playlists. Storage might be full.", "error");
-    }
+    if (savePlaylistsTimeout) clearTimeout(savePlaylistsTimeout);
+    savePlaylistsTimeout = setTimeout(() => {
+        try {
+            const compressedPlaylists = playlists.map(playlist => ({
+                id: playlist.id,
+                name: playlist.name,
+                videos: playlist.videos.map(video => ({
+                    id: video.id,
+                    title: video.title,
+                    thumbnail: video.thumbnail,
+                    url: video.url
+                }))
+            }));
+            localStorage.setItem('playlists', JSON.stringify(compressedPlaylists));
+        } catch (e) {
+            console.error("Error saving playlists:", e);
+            showToast("Failed to save playlists. Storage might be full.", "error");
+        }
+    }, 500); // Debounce to avoid frequent writes
 }
 
 function loadPlaylists() {
     try {
         const savedPlaylists = localStorage.getItem('playlists');
-        playlists = JSON.parse(savedPlaylists) || [];
-        playlists.forEach(p => { if (!p.videos) p.videos = []; });
+        if (!savedPlaylists) {
+            playlists = [];
+            return;
+        }
+        const parsedPlaylists = JSON.parse(savedPlaylists);
+        playlists = parsedPlaylists.map(p => ({
+            id: p.id,
+            name: p.name,
+            videos: p.videos || []
+        }));
     } catch (e) {
         console.error("Error loading playlists from localStorage:", e);
         showToast("Failed to load playlists. Data might be corrupted.", "error");
@@ -559,7 +583,7 @@ function saveLastSelectedPlaylist(id) {
 
 function saveAutoplaySetting() {
     try {
-        localStorage.setItem('autoplayEnabled', isAutoplayEnabled);
+        localStorage.setItem('autoplayEnabled', isAutoplayEnabled ? '1' : '0');
     } catch (e) {
         console.error("Error saving autoplay setting:", e);
     }
@@ -567,7 +591,8 @@ function saveAutoplaySetting() {
 
 function loadAutoplaySetting() {
     try {
-        isAutoplayEnabled = localStorage.getItem('autoplayEnabled') === 'true';
+        const savedValue = localStorage.getItem('autoplayEnabled');
+        isAutoplayEnabled = savedValue === '1';
         autoplayToggle.checked = isAutoplayEnabled;
     } catch (e) {
         console.error("Error loading autoplay setting:", e);
@@ -823,38 +848,53 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
     renderVideos();
 }
 
-function playVideo(videoId) {
+async function playVideo(videoId) {
+    if (!videoId) return;
+
     playerWrapperEl.classList.remove('hidden');
-    currentlyPlayingVideoId = videoId;
-    updatePlayingVideoHighlight(videoId);
 
-    if (ytPlayer && isPlayerReady) {
-        try {
-            ytPlayer.loadVideoById(videoId);
-            setTimeout(() => {
-                if (playerWrapperEl.offsetParent !== null) {
-                    playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    try {
+        if (!ytPlayer && isYTApiReady) {
+            console.log("Creating YT.Player instance for video:", videoId);
+            videoIdToPlayOnReady = videoId;
+            isPlayerReady = false;
+            ytPlayer = new YT.Player('player', {
+                height: '100%',
+                width: '100%',
+                videoId: videoId,
+                playerVars: { 'playsinline': 1, 'rel': 0, 'enablejsapi': 1, 'autoplay': 1 },
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange,
+                    'onError': onPlayerError
                 }
-            }, 100);
-        } catch (error) {
-            console.error("Error calling loadVideoById:", error);
-            showToast("Failed to load video.", "error");
-            stopVideo();
-            playerWrapperEl.classList.add('hidden');
-            videoIdToPlayOnReady = null;
+            });
+        } else if (ytPlayer && isPlayerReady) {
+            console.log("Loading video into existing player:", videoId);
+            currentlyPlayingVideoId = videoId;
+            ytPlayer.loadVideoById(videoId);
+            updatePlayingVideoHighlight(videoId);
+            updateAudioOnlyDisplay();
+            updateMediaSessionForVideo(videoId);
+        } else if (ytPlayer && !isPlayerReady) {
+            console.log("Player exists but not ready, queuing video:", videoId);
+            videoIdToPlayOnReady = videoId;
+        } else if (!isYTApiReady) {
+            console.log("API not ready, queuing video:", videoId);
+            videoIdToPlayOnReady = videoId;
         }
-    } else {
-        videoIdToPlayOnReady = videoId;
-    }
 
-    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    if (currentPlaylist) {
-        const videoData = currentPlaylist.videos.find(v => v.id === videoId);
-        updateMediaSessionMetadata(videoData || null);
-    } else {
-        updateMediaSessionMetadata(null);
+        setTimeout(() => {
+            if (playerWrapperEl.offsetParent !== null && !isAudioOnlyMode) {
+                playerWrapperEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }, 100);
+
+    } catch (error) {
+        console.error("Error during playVideo:", error);
+        showToast("Failed to initialize player or load video.", "error");
+        handleClosePlayer();
     }
-    updateAudioOnlyDisplay();
 }
 
 function stopVideo() {
@@ -908,69 +948,73 @@ function renderPlaylists() {
 }
 
 function renderVideos() {
+    // Cleanup existing observer
+    if (lazyImageObserver) {
+        lazyImageObserver.disconnect();
+        lazyImageObserver = null;
+    }
+
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
-    videoGridEl.innerHTML = '';
+    if (!currentPlaylist) return;
 
-    if (!currentPlaylist || currentPlaylist.videos.length === 0) {
-        paginationControlsEl.classList.add('hidden');
-        videoPlaceholderEl.textContent = currentPlaylist ? `Playlist "${escapeHTML(currentPlaylist.name)}" is empty.` : 'Select or create a playlist.';
-        videoPlaceholderEl.classList.remove('hidden');
-        return;
-    }
+    // Use requestAnimationFrame for smoother rendering
+    requestAnimationFrame(() => {
+        videoGridEl.innerHTML = '';
 
-    videoPlaceholderEl.classList.add('hidden');
-    const totalVideos = currentPlaylist.videos.length;
-    const totalPages = Math.ceil(totalVideos / videosPerPage);
-    if (currentPage > totalPages && totalPages > 0) currentPage = totalPages;
-    else if (currentPage < 1 && totalPages > 0) currentPage = 1;
-    else if (totalPages === 0) currentPage = 1;
+        if (currentPlaylist.videos.length === 0) {
+            paginationControlsEl.classList.add('hidden');
+            videoPlaceholderEl.textContent = `Playlist "${escapeHTML(currentPlaylist.name)}" is empty.`;
+            videoPlaceholderEl.classList.remove('hidden');
+            return;
+        }
 
-    const startIndex = (currentPage - 1) * videosPerPage;
-    const endIndex = startIndex + videosPerPage;
-    const videosToRender = currentPlaylist.videos.slice(startIndex, endIndex);
+        const fragment = document.createDocumentFragment();
+        const startIndex = (currentPage - 1) * videosPerPage;
+        const endIndex = startIndex + videosPerPage;
+        const videosToRender = currentPlaylist.videos.slice(startIndex, endIndex);
 
-    const fragment = document.createDocumentFragment();
-
-    videosToRender.forEach(video => {
-        const div = document.createElement('div');
-        div.innerHTML = `
-            <div class="video-card ${video.id === currentlyPlayingVideoId ? 'playing' : ''}" data-video-id="${video.id}" draggable="true">
-                <div class="thumbnail-wrapper">
-                    <img data-src="${escapeHTML(video.thumbnail)}" class="thumbnail" alt="" loading="lazy">
-                </div>
-                <div class="video-info">
-                    <h4>${escapeHTML(video.title)}</h4>
-                    <div class="video-controls">
-                        <span class="drag-handle" title="Drag to reorder">${ICONS.drag}</span>
-                        <button class="icon-button delete-video-btn" title="Remove from playlist">${ICONS.delete}</button>
+        videosToRender.forEach(video => {
+            const div = document.createElement('div');
+            div.innerHTML = `
+                <div class="video-card ${video.id === currentlyPlayingVideoId ? 'playing' : ''}" data-video-id="${video.id}" draggable="true">
+                    <div class="thumbnail-wrapper">
+                        <img data-src="${escapeHTML(video.thumbnail)}" class="thumbnail" alt="" loading="lazy">
                     </div>
-                </div>
-            </div>`;
-        fragment.appendChild(div.firstElementChild);
-    });
+                    <div class="video-info">
+                        <h4>${escapeHTML(video.title)}</h4>
+                        <div class="video-controls">
+                            <span class="drag-handle" title="Drag to reorder">${ICONS.drag}</span>
+                            <button class="icon-button delete-video-btn" title="Remove from playlist">${ICONS.delete}</button>
+                        </div>
+                    </div>
+                </div>`;
+            fragment.appendChild(div.firstElementChild);
+        });
 
-    videoGridEl.appendChild(fragment);
-    renderPaginationControls(totalVideos, totalPages);
+        videoGridEl.appendChild(fragment);
+        renderPaginationControls(currentPlaylist.videos.length, Math.ceil(currentPlaylist.videos.length / videosPerPage));
 
-    const lazyImages = videoGridEl.querySelectorAll('img[data-src]');
-    if ('IntersectionObserver' in window) {
-        const lazyImageObserver = new IntersectionObserver((entries, observer) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const img = entry.target;
-                    img.src = img.dataset.src;
-                    img.removeAttribute('data-src');
-                    observer.unobserve(img);
-                }
+        // Lazy load images
+        const lazyImages = videoGridEl.querySelectorAll('img[data-src]');
+        if ('IntersectionObserver' in window) {
+            lazyImageObserver = new IntersectionObserver((entries, observer) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const img = entry.target;
+                        img.src = img.dataset.src;
+                        img.removeAttribute('data-src');
+                        observer.unobserve(img);
+                    }
+                });
             });
-        });
-        lazyImages.forEach(img => lazyImageObserver.observe(img));
-    } else {
-        lazyImages.forEach(img => {
-            img.src = img.dataset.src;
-            img.removeAttribute('data-src');
-        });
-    }
+            lazyImages.forEach(img => lazyImageObserver.observe(img));
+        } else {
+            lazyImages.forEach(img => {
+                img.src = img.dataset.src;
+                img.removeAttribute('data-src');
+            });
+        }
+    });
 }
 
 // UI Updates
@@ -1079,9 +1123,18 @@ function handleVisualSwitchClick(event) {
 }
 
 // Audio Only Mode
+function saveAudioOnlySetting() {
+    try {
+        localStorage.setItem('audioOnlyEnabled', isAudioOnlyMode ? '1' : '0');
+    } catch (e) {
+        console.error("Error saving audio only setting:", e);
+    }
+}
+
 function loadAudioOnlySetting() {
     try {
-        isAudioOnlyMode = localStorage.getItem('audioOnlyEnabled') === 'true';
+        const savedValue = localStorage.getItem('audioOnlyEnabled');
+        isAudioOnlyMode = savedValue === '1';
         audioOnlyToggle.checked = isAudioOnlyMode;
         applyAudioOnlyClass();
     } catch (e) {
@@ -1089,14 +1142,6 @@ function loadAudioOnlySetting() {
         isAudioOnlyMode = false;
         audioOnlyToggle.checked = false;
         applyAudioOnlyClass();
-    }
-}
-
-function saveAudioOnlySetting() {
-    try {
-        localStorage.setItem('audioOnlyEnabled', isAudioOnlyMode);
-    } catch (e) {
-        console.error("Error saving audio only setting:", e);
     }
 }
 
@@ -1172,6 +1217,31 @@ function showToast(message, type = 'info', duration = 3000) {
 function handleClosePlayer() {
     stopVideo();
     playerWrapperEl.classList.add('hidden');
+
+    if (ytPlayer && typeof ytPlayer.destroy === 'function') {
+        try {
+            console.log("Destroying YT Player instance.");
+            ytPlayer.destroy();
+        } catch (e) {
+            console.error("Error destroying player:", e);
+        }
+    }
+    ytPlayer = null;
+    isPlayerReady = false;
+    videoIdToPlayOnReady = null;
+    currentlyPlayingVideoId = null;
+    updateAudioOnlyDisplay();
+    updatePlayingVideoHighlight(null);
+
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.playbackState = 'none';
+        navigator.mediaSession.setActionHandler('play', null);
+        navigator.mediaSession.setActionHandler('pause', null);
+        navigator.mediaSession.setActionHandler('stop', null);
+        navigator.mediaSession.setActionHandler('previoustrack', null);
+        navigator.mediaSession.setActionHandler('nexttrack', null);
+    }
 }
 
 function renderPaginationControls(totalVideos, totalPages) {
@@ -1330,3 +1400,20 @@ function handleWindowResize() {
 
 // Start App
 document.addEventListener('DOMContentLoaded', init);
+
+function updateMediaSessionForVideo(videoId) {
+    const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
+    const videoData = currentPlaylist ? currentPlaylist.videos.find(v => v.id === videoId) : null;
+    updateMediaSessionMetadata(videoData || null);
+}
+
+function saveSettingsBatch(settings) {
+    try {
+        Object.entries(settings).forEach(([key, value]) => {
+            localStorage.setItem(key, value);
+        });
+    } catch (e) {
+        console.error("Error saving settings batch:", e);
+        showToast("Failed to save settings. Storage might be full.", "error");
+    }
+}
