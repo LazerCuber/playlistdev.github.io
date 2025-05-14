@@ -413,8 +413,22 @@ function updateThemeIcon() {
 }
 
 // YouTube Player API
+function destroyPlayer() {
+    if (ytPlayer) {
+        try {
+            ytPlayer.destroy();
+        } catch (error) {
+            console.error("Error destroying player:", error);
+        }
+        ytPlayer = null;
+    }
+    isPlayerReady = false;
+    videoIdToPlayOnReady = null;
+}
+
 function onYouTubeIframeAPIReady() {
     if (document.getElementById('player')) {
+        destroyPlayer(); // Ensure no duplicate player
         ytPlayer = new YT.Player('player', {
             height: '100%',
             width: '100%',
@@ -594,25 +608,10 @@ function handleCreatePlaylist() {
 function handleDeletePlaylist(id) {
     const playlistIndex = playlists.findIndex(p => p.id === id);
     if (playlistIndex === -1) return;
-    const playlistName = playlists[playlistIndex].name;
 
-    if (!confirm(`Are you sure you want to delete "${escapeHTML(playlistName)}"? This cannot be undone.`)) return;
-
-    playlists.splice(playlistIndex, 1);
-
-    if (currentPlaylistId === id) {
-        currentPlaylistId = null;
-        saveLastSelectedPlaylist(null);
-        if (playlists.length > 0) {
-            selectPlaylist(playlists[0].id);
-        } else {
-            updateUIForNoSelection();
-        }
-    }
-
+    const newPlaylists = [...playlists.slice(0, playlistIndex), ...playlists.slice(playlistIndex + 1)];
+    playlists = newPlaylists;
     savePlaylists();
-    renderPlaylists();
-    showToast(`Playlist "${escapeHTML(playlistName)}" deleted.`, 'info');
 }
 
 function handleRenamePlaylist(id) {
@@ -824,6 +823,10 @@ function handleReorderVideo(videoIdToMove, targetVideoId) {
 }
 
 function playVideo(videoId) {
+    if (currentlyPlayingVideoId === videoId && ytPlayer && isPlayerReady) {
+        return; // Avoid redundant calls
+    }
+
     playerWrapperEl.classList.remove('hidden');
     currentlyPlayingVideoId = videoId;
     updatePlayingVideoHighlight(videoId);
@@ -845,6 +848,9 @@ function playVideo(videoId) {
         }
     } else {
         videoIdToPlayOnReady = videoId;
+        if (!ytPlayer) {
+            onYouTubeIframeAPIReady(); // Reinitialize if player is destroyed
+        }
     }
 
     const currentPlaylist = playlists.find(p => p.id === currentPlaylistId);
@@ -880,7 +886,6 @@ function renderPlaylists() {
     const searchTerm = playlistSearchInput.value.toLowerCase();
     const filteredPlaylists = playlists.filter(p => p.name.toLowerCase().includes(searchTerm));
     const fragment = document.createDocumentFragment();
-    const isDesktop = window.innerWidth >= 768;
 
     if (filteredPlaylists.length === 0) {
         noPlaylistsMessageEl.classList.remove('hidden');
@@ -891,13 +896,13 @@ function renderPlaylists() {
             const li = document.createElement('li');
             li.className = `playlist-item ${playlist.id === currentPlaylistId ? 'active' : ''}`;
             li.dataset.id = playlist.id;
-            if (isDesktop) li.draggable = true;
+            li.draggable = window.innerWidth >= 768;
             li.innerHTML = `
                 <span class="playlist-name">${escapeHTML(playlist.name)}</span>
                 <span class="playlist-count">${playlist.videos.length}</span>
                 <div class="controls">
-                    <button class="icon-button rename-btn" title="Rename Playlist">${ICONS.rename}<span class="visually-hidden">Rename</span></button>
-                    <button class="icon-button delete-btn" title="Delete Playlist">${ICONS.delete}<span class="visually-hidden">Delete</span></button>
+                    <button class="icon-button rename-btn" title="Rename Playlist">${ICONS.rename}</button>
+                    <button class="icon-button delete-btn" title="Delete Playlist">${ICONS.delete}</button>
                 </div>`;
             fragment.appendChild(li);
         });
@@ -1172,6 +1177,7 @@ function showToast(message, type = 'info', duration = 3000) {
 function handleClosePlayer() {
     stopVideo();
     playerWrapperEl.classList.add('hidden');
+    destroyPlayer(); // Destroy player when closed
 }
 
 function renderPaginationControls(totalVideos, totalPages) {
