@@ -39,13 +39,13 @@ let currentPlaylistId = null;
 let ytPlayer = null;
 let isPlayerReady = false;
 let videoIdToPlayOnReady = null;
-let isAutoplayEnabled = false;
+let isAutoplayEnabled = true;
 let currentlyPlayingVideoId = null;
 let draggedVideoId = null;
 let dragTargetElement = null;
 let draggedPlaylistId = null;
 let playlistDragTargetElement = null;
-let currentTheme = 'light';
+let currentTheme = 'dark';
 let isResizing = false;
 let isTouchDragging = false;
 let touchDraggedElement = null;
@@ -392,7 +392,7 @@ function handleReorderPlaylist(playlistIdToMove, targetPlaylistId, insertBeforeT
 
 // Theme Management
 function loadTheme() {
-    const savedTheme = localStorage.getItem('uiTheme') || 'light';
+    const savedTheme = localStorage.getItem('uiTheme') || 'dark';
     applyTheme(savedTheme);
 }
 
@@ -581,12 +581,12 @@ function saveAutoplaySetting() {
 
 function loadAutoplaySetting() {
     try {
-        isAutoplayEnabled = localStorage.getItem('autoplayEnabled') === 'true';
+        isAutoplayEnabled = localStorage.getItem('autoplayEnabled') === 'true' || true;
         autoplayToggle.checked = isAutoplayEnabled;
     } catch (e) {
         console.error("Error loading autoplay setting:", e);
-        isAutoplayEnabled = false;
-        autoplayToggle.checked = false;
+        isAutoplayEnabled = true;
+        autoplayToggle.checked = true;
     }
 }
 
