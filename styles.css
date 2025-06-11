@@ -22,11 +22,12 @@
             --sidebar-default-width: 255px;
             --sidebar-resize-handle-width: 5px;
 
-            /* Shadows (More Subtle) */
-            --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.03);
-            --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.04);
-            --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.05);
-            --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.06);
+            /* Shadows (More Pronounced for Depth) */
+            --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 1px rgba(0, 0, 0, 0.05);
+            --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.08);
+            --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.15), 0 5px 10px rgba(0, 0, 0, 0.1);
+            --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.2), 0 10px 20px rgba(0, 0, 0, 0.15);
 
             /* Z-Indexes */
             --z-sticky: 10;
@@ -142,6 +143,14 @@
             overscroll-behavior-y: contain;
             height: 100%;
             min-height: 100%;
+            opacity: 0;
+            animation: fadeIn 0.5s ease-in forwards;
+        }
+
+        /* Apple-like fade-in animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         img,
@@ -345,9 +354,8 @@
         }
 
         button:not(:disabled):hover {
-            background-color: var(--primary-color-dark);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
         }
 
         button:not(:disabled):active {
@@ -440,7 +448,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            transition: background-color var(--transition-speed) var(--transition-timing), color var(--transition-speed) var(--transition-timing), border-color 0.1s ease-out;
+            transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
             position: relative;
             font-size: 0.9rem;
             border: 1px solid transparent;
@@ -579,7 +587,9 @@
             gap: 16px;
             padding-bottom: 16px;
             border-bottom: 1px solid var(--border-color-light);
-            transition: border-color var(--transition-speed) var(--transition-timing);
+            transition: all var(--transition-speed) var(--transition-timing);
+            opacity: 0;
+            animation: fadeIn var(--transition-speed) ease-in 0.1s forwards;
         }
 
         #currentPlaylistTitle {
@@ -831,19 +841,18 @@
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
             /* Smaller min */
-            gap: 20px;
+            gap: 16px;
             margin-top: 24px;
+            transition: all 0.3s ease;
         }
 
         .video-card {
             background-color: var(--video-card-background);
-            border-radius: var(
-            --border-radius-md);
+            border-radius: var(--border-radius-md);
             overflow: hidden;
-            box-shadow: var(
-            --shadow-xs);
+            box-shadow: var(--shadow-xs);
             cursor: pointer;
-            transition: transform var(--transition-speed) var(--transition-timing), box-shadow var(--transition-speed) var(--transition-timing), background-color var(--transition-speed) var(--transition-timing), border-color var(--transition-speed) var(--transition-timing);
+            transition: transform 0.3s cubic-bezier(0.25, 0.1, 0.25, 1), box-shadow 0.3s ease, background-color 0.3s ease;
             display: flex;
             flex-direction: column;
             position: relative;
@@ -852,8 +861,8 @@
         }
 
         .video-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
             border-color: var(--border-color);
         }
 
@@ -1474,4 +1483,34 @@
             min-width: 80px;
             /* Approx width */
             text-align: center;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        /* Smooth transitions for theme changes */
+        html[data-theme="dark"],
+        html[data-theme="light"] {
+            transition: background-color 0.5s ease, color 0.5s ease;
+        }
+
+        @keyframes scaleUp {
+            0% {
+                transform: scale(0.9);
+                opacity: 0;
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .playlist-item.added {
+            animation: scaleUp 0.3s ease-out forwards;
+        }
+
+        .video-card.added {
+            animation: scaleUp 0.3s ease-out forwards;
         }

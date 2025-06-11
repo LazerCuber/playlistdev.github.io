@@ -230,10 +230,8 @@ function handleDragStart(event) {
 
 function handleDragEnd() {
     const draggingElement = videoGridEl.querySelector('.video-card.dragging');
-    if (draggingElement) {
-        draggingElement.classList.remove('dragging');
-    }
-    clearDragOverStyles();
+    if (draggingElement) draggingElement.classList.remove('dragging');
+    clearDragOverStyles(); // Explicitly clear styles
     draggedVideoId = null;
     dragTargetElement = null;
 }
@@ -581,7 +579,7 @@ function saveAutoplaySetting() {
 
 function loadAutoplaySetting() {
     try {
-        isAutoplayEnabled = localStorage.getItem('autoplayEnabled') === 'true' || true;
+        isAutoplayEnabled = localStorage.getItem('autoplayEnabled') !== 'false'; // Defaults to true unless explicitly set to false
         autoplayToggle.checked = isAutoplayEnabled;
     } catch (e) {
         console.error("Error loading autoplay setting:", e);
@@ -603,15 +601,43 @@ function handleCreatePlaylist() {
     selectPlaylist(newPlaylist.id);
     playlistNameInput.value = '';
     showToast(`Playlist "${escapeHTML(name)}" created.`, 'success');
+
+    // Apply animation to the newly created playlist
+    const newPlaylistItem = playlistListEl.querySelector(`.playlist-item[data-id="${newPlaylist.id}"]`);
+    if (newPlaylistItem) {
+        newPlaylistItem.classList.add('added');
+        setTimeout(() => newPlaylistItem.classList.remove('added'), 300);
+    }
 }
 
 function handleDeletePlaylist(id) {
+    const playlist = playlists.find(p => p.id === id);
+    if (!playlist) return;
+
+    // Confirm deletion with the user
+    const confirmDelete = confirm(`Are you sure you want to delete the playlist "${escapeHTML(playlist.name)}"?`);
+    if (!confirmDelete) return;
+
     const playlistIndex = playlists.findIndex(p => p.id === id);
     if (playlistIndex === -1) return;
 
+    // Remove the playlist from the array
     const newPlaylists = [...playlists.slice(0, playlistIndex), ...playlists.slice(playlistIndex + 1)];
     playlists = newPlaylists;
     savePlaylists();
+
+    // If the deleted playlist was the currently selected one, reset the selection
+    if (currentPlaylistId === id) {
+        currentPlaylistId = null;
+        saveLastSelectedPlaylist(null);
+        updateUIForNoSelection();
+    }
+
+    // Re-render the playlists and videos
+    renderPlaylists();
+    renderVideos();
+
+    showToast(`Playlist "${escapeHTML(playlist.name)}" deleted.`, 'info');
 }
 
 function handleRenamePlaylist(id) {
@@ -755,10 +781,30 @@ async function handleAddVideo() {
         };
 
         currentPlaylist.videos.push(video);
-        currentPage = Math.ceil(currentPlaylist.videos.length / videosPerPage);
         savePlaylists();
-        renderVideos();
-        renderPlaylists();
+
+        // Append the new video card directly to the grid
+        const div = document.createElement('div');
+        div.innerHTML = `
+            <div class="video-card ${video.id === currentlyPlayingVideoId ? 'playing' : ''}" data-video-id="${video.id}" draggable="true">
+                <div class="thumbnail-wrapper">
+                    <img src="${escapeHTML(video.thumbnail)}" class="thumbnail" alt="" loading="lazy">
+                </div>
+                <div class="video-info">
+                    <h4>${escapeHTML(video.title)}</h4>
+                    <div class="video-controls">
+                        <span class="drag-handle" title="Drag to reorder">${ICONS.drag}</span>
+                        <button class="icon-button delete-video-btn" title="Remove from playlist">${ICONS.delete}</button>
+                    </div>
+                </div>
+            </div>`;
+        const videoCard = div.firstElementChild;
+        videoGridEl.appendChild(videoCard);
+
+        // Apply animation to the newly added video
+        videoCard.classList.add('added');
+        setTimeout(() => videoCard.classList.remove('added'), 300);
+
         videoUrlInput.value = '';
         showToast(`Video "${escapeHTML(video.title)}" added.`, 'success');
     } catch (error) {
@@ -768,7 +814,7 @@ async function handleAddVideo() {
         addVideoBtn.disabled = videoUrlInput.value.trim() === '';
         addVideoBtn.innerHTML = ICONS.add + ' Add Video';
         videoUrlInput.disabled = false;
-        videoUrlInput.focus();
+        addVideoBtn.focus();
     }
 }
 
@@ -788,14 +834,14 @@ function handleDeleteVideo(videoId) {
     }
 
     currentPlaylist.videos.splice(videoIndex, 1);
-
-    const totalPages = Math.ceil(currentPlaylist.videos.length / videosPerPage);
-    if (currentPage > totalPages && totalPages > 0) currentPage = totalPages;
-    else if (totalPages === 0) currentPage = 1;
-
     savePlaylists();
-    renderVideos();
-    renderPlaylists();
+
+    // Remove the video card directly from the grid
+    const videoCard = videoGridEl.querySelector(`.video-card[data-video-id="${videoId}"]`);
+    if (videoCard) {
+        videoCard.remove();
+    }
+
     showToast(`Removed "${escapeHTML(videoTitle)}".`, 'info');
 
     if (videoId === currentlyPlayingVideoId) currentlyPlayingVideoId = null;
@@ -876,7 +922,7 @@ function stopVideo() {
 }
 
 function extractVideoId(url) {
-    const regex = /(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/|youtube.com\/shorts\/)([a-zA-Z0-9_-]{11})/;
+    const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([^"&?\/\s]{11})/;
     const match = url.match(regex);
     return match ? match[1] : null;
 }
@@ -957,6 +1003,7 @@ function renderVideos() {
     videoGridEl.appendChild(fragment);
     renderPaginationControls(totalVideos, totalPages);
 
+    // Lazy load images
     const lazyImages = videoGridEl.querySelectorAll('img[data-src]');
     if ('IntersectionObserver' in window) {
         const lazyImageObserver = new IntersectionObserver((entries, observer) => {
@@ -985,14 +1032,13 @@ function updateUIForNoSelection() {
     currentPlaylistTitleEl.textContent = 'No playlist selected';
     videoFormEl.classList.add('hidden');
     playlistActionsEl.classList.add('hidden');
-    addVideoBtn.disabled = true;
     videoGridEl.innerHTML = '';
     playerWrapperEl.classList.add('hidden');
     stopVideo();
     videoPlaceholderEl.textContent = 'Create or select a playlist to get started.';
     videoPlaceholderEl.classList.remove('hidden');
     paginationControlsEl.classList.add('hidden');
-    renderPlaylists();
+    renderPlaylists(); // Ensure the playlist list is updated
 }
 
 function handleAutoplayToggle() {
@@ -1151,27 +1197,19 @@ function escapeHTML(str) {
 function showToast(message, type = 'info', duration = 3000) {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    let icon = ICONS.info;
-    if (type === 'success') icon = ICONS.success;
-    if (type === 'error') icon = ICONS.error;
-
-    toast.innerHTML = `${icon}<span>${escapeHTML(message)}</span>`;
+    toast.innerHTML = `${ICONS[type] || ICONS.info}<span>${escapeHTML(message)}</span>`;
     toastContainerEl.appendChild(toast);
 
-    requestAnimationFrame(() => {
-        toast.classList.add('show');
-    });
+    // Remove existing toasts if too many
+    if (toastContainerEl.children.length > 3) {
+        toastContainerEl.removeChild(toastContainerEl.children[0]);
+    }
 
-    const timeoutId = setTimeout(() => {
+    setTimeout(() => toast.classList.add('show'), 100);
+    setTimeout(() => {
         toast.classList.remove('show');
-        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+        toast.addEventListener('transitionend', () => toast.remove());
     }, duration);
-
-    toast.addEventListener('click', () => {
-        clearTimeout(timeoutId);
-        toast.classList.remove('show');
-        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
-    });
 }
 
 function handleClosePlayer() {
