@@ -191,13 +191,17 @@ function handlePlaylistClick(event) {
     } else if (event.target.closest('.delete-btn')) {
         handleDeletePlaylist(playlistId);
     } else if (!event.target.closest('.playlist-drag-handle') && !event.target.closest('.controls')) {
+        // Remove .active from all playlist items (extra safety for mobile)
         document.querySelectorAll('.playlist-item').forEach(item => {
             item.classList.remove('active');
         });
         playlistItem.classList.add('active');
-        
-        playlistItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        
+
+        // Only scroll into view on desktop
+        if (window.innerWidth >= 768) {
+            playlistItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
         selectPlaylist(playlistId);
     }
 }
