@@ -152,7 +152,7 @@ function setupEventListeners() {
     sidebarResizerEl.addEventListener('mousedown', initSidebarResize);
     closePlayerBtn.addEventListener('click', handleClosePlayer);
 
-    playlistListEl.addEventListener('click', handlePlaylistClick);
+    playlistListEl.addEventListener('click', handlePlaylistClick, { passive: false });
     videoGridEl.addEventListener('click', handleVideoGridClick);
 
     setupDragAndDropListeners();
@@ -180,15 +180,15 @@ function setupEventListeners() {
 
 // Event Delegation Handlers
 function handlePlaylistClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
     const playlistItem = event.target.closest('.playlist-item');
     if (!playlistItem) return;
     const playlistId = parseInt(playlistItem.dataset.id);
 
     if (event.target.closest('.rename-btn')) {
-        event.stopPropagation();
         handleRenamePlaylist(playlistId);
     } else if (event.target.closest('.delete-btn')) {
-        event.stopPropagation();
         handleDeletePlaylist(playlistId);
     } else if (!event.target.closest('.playlist-drag-handle') && !event.target.closest('.controls')) {
         selectPlaylist(playlistId);
@@ -659,29 +659,44 @@ function handleRenamePlaylist(id) {
 }
 
 function selectPlaylist(id) {
-    const selectedPlaylist = playlists.find(p => p.id === id);
-    if (!selectedPlaylist) {
-        console.error("Playlist not found:", id);
-        updateUIForNoSelection();
-        return;
+    // Clear active state from all playlist items
+    document.querySelectorAll('.playlist-item').forEach(item => {
+        item.classList.remove('active');
+    });
+
+    // Apply active state to the selected playlist
+    const selectedPlaylist = document.querySelector(`.playlist-item[data-id="${id}"]`);
+    if (selectedPlaylist) {
+        selectedPlaylist.classList.add('active');
     }
 
+    // Update the current playlist ID and save it
     currentPlaylistId = id;
-    currentPage = 1;
     saveLastSelectedPlaylist(id);
 
-    if (playlistSearchInput.value !== '') playlistSearchInput.value = '';
+    // Reset search input if it's not empty
+    if (playlistSearchInput.value !== '') {
+        playlistSearchInput.value = '';
+    }
 
-    currentPlaylistTitleEl.textContent = escapeHTML(selectedPlaylist.name);
+    // Update the UI
+    const currentPlaylist = playlists.find(p => p.id === id);
+    if (currentPlaylist) {
+        currentPlaylistTitleEl.textContent = escapeHTML(currentPlaylist.name);
+    }
+
+    // Show/hide relevant UI elements
     videoFormEl.classList.remove('hidden');
     playlistActionsEl.classList.remove('hidden');
     addVideoBtn.disabled = videoUrlInput.value.trim() === '';
     videoPlaceholderEl.classList.add('hidden');
 
+    // Reset player and video highlights
     playerWrapperEl.classList.add('hidden');
     stopVideo();
     updatePlayingVideoHighlight(null);
 
+    // Re-render playlists and videos
     renderPlaylists();
     renderVideos();
 }

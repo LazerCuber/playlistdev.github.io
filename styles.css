@@ -448,7 +448,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+            transition: transform 0.3s ease, opacity 0.3s ease;
             position: relative;
             font-size: 0.9rem;
             border: 1px solid transparent;
@@ -852,7 +852,7 @@
             overflow: hidden;
             box-shadow: var(--shadow-xs);
             cursor: pointer;
-            transition: transform 0.3s cubic-bezier(0.25, 0.1, 0.25, 1), box-shadow 0.3s ease, background-color 0.3s ease;
+            transition: transform 0.3s ease, opacity 0.3s ease;
             display: flex;
             flex-direction: column;
             position: relative;
@@ -862,8 +862,8 @@
 
         .video-card:hover {
             transform: translateY(-5px) scale(1.02);
-            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
-            border-color: var(--border-color);
+            opacity: 0.95;
+            will-change: transform, opacity;
         }
 
         /* Drag & Drop Styles */
@@ -1513,4 +1513,9 @@
 
         .video-card.added {
             animation: scaleUp 0.3s ease-out forwards;
+        }
+
+        /* Promote resizer to GPU layer */
+        .sidebar-resizer:hover::after {
+            transform: translate3d(0, 0, 0);
         }
