@@ -191,6 +191,13 @@ function handlePlaylistClick(event) {
     } else if (event.target.closest('.delete-btn')) {
         handleDeletePlaylist(playlistId);
     } else if (!event.target.closest('.playlist-drag-handle') && !event.target.closest('.controls')) {
+        document.querySelectorAll('.playlist-item').forEach(item => {
+            item.classList.remove('active');
+        });
+        playlistItem.classList.add('active');
+        
+        playlistItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        
         selectPlaylist(playlistId);
     }
 }
