@@ -456,7 +456,6 @@
 
         .playlist-item:hover {
             background-color: var(--hover-bg-color);
-            border-color: var(--border-color-light);
         }
 
         .playlist-item.active {
@@ -1403,6 +1402,10 @@
             }
             body.audio-only-active .player-wrapper {
                 padding: 5px 40px 5px 10px; /* Adjust mobile padding */
+            }
+
+            .playlist-item:hover {
+                background-color: inherit; /* Disables the hover effect on mobile */
             }
         }
 
