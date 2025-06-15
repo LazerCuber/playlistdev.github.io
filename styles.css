@@ -149,8 +149,8 @@
 
         /* Apple-like fade-in animation */
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; margin-top: 10px; }
+            to { opacity: 1; margin-top: 0; }
         }
 
         img,
@@ -197,6 +197,7 @@
             flex-shrink: 0;
             transition: background-color var(--transition-speed) var(--transition-timing), border-color var(--transition-speed) var(--transition-timing);
             position: relative;
+            will-change: background-color, border-color;
         }
 
         /* Sidebar Resizer */
@@ -356,6 +357,7 @@
         button:not(:disabled):hover {
             transform: translateY(-2px) scale(1.02);
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            background-color: #bb6262;
         }
 
         button:not(:disabled):active {
@@ -476,6 +478,7 @@
             background: var(--surface-color-alt);
             box-shadow: var(--shadow-md);
             border-color: var(--border-color);
+            will-change: transform, opacity;
         }
 
         /* Playlist drag-over style (similar to video card drag-over) */
@@ -575,6 +578,7 @@
             border: 1px solid var(--border-color-light);
             border-radius: var(--border-radius-lg);
             margin: 10px 10px 10px 10px;
+            will-change: background-color;
         }
 
         .main-header {
@@ -762,6 +766,7 @@
             height: 0;
             overflow: hidden;
             transition: opacity var(--transition-speed) ease-in-out, height var(--transition-speed) ease-in-out;
+            will-change: opacity, height;
         }
 
         /* Style to hide the video when audio-only is active */
@@ -843,6 +848,7 @@
             gap: 16px;
             margin-top: 24px;
             transition: all 0.3s ease;
+            will-change: transform, opacity;
         }
 
         .video-card {
@@ -873,6 +879,7 @@
             cursor: grabbing;
             /* border-color: var(--primary-color); */ /* Removed border */
             background: var(--surface-color-alt);
+            will-change: transform, opacity;
         }
 
         /* Style for the active/playing video card */
@@ -1088,10 +1095,11 @@
             position: fixed;
             bottom: 20px;
             right: 20px;
-            z-index: var(--z-toast);
+            z-index: 9999;
             display: flex;
             flex-direction: column;
             gap: 10px;
+            align-items: flex-end;
         }
 
         .toast {
@@ -1352,17 +1360,18 @@
             }
 
             .toast-container {
-                bottom: 10px;
-                right: 10px;
-                left: 10px;
-                /* Allow toasts to span more width */
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                right: auto;
+                max-width: calc(100% - 40px);
+                width: 100%;
                 align-items: center;
-                /* Center toasts horizontally */
             }
 
             .toast {
-                width: auto;
-                max-width: 90%;
+                width: 100%;
+                max-width: 400px;
             }
 
             /* Increase touch target size for icon buttons */
@@ -1512,13 +1521,16 @@
 
         .playlist-item.added {
             animation: scaleUp 0.3s ease-out forwards;
+            will-change: transform, opacity;
         }
 
         .video-card.added {
             animation: scaleUp 0.3s ease-out forwards;
+            will-change: transform, opacity;
         }
 
         /* Promote resizer to GPU layer */
         .sidebar-resizer:hover::after {
             transform: translate3d(0, 0, 0);
+            will-change: transform;
         }
