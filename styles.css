@@ -352,10 +352,11 @@
             box-shadow: var(--shadow-xs);
             line-height: 1.4;
             /* Prevent text jump on loading */
+            will-change: transform; /* Hint to the browser for better performance */
         }
 
         button:not(:disabled):hover {
-            transform: translateY(-2px) scale(1.02);
+            transform: translateY(-2px) scale(1.02) translateZ(0); /* Add translateZ(0) for GPU acceleration */
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
             background-color: #bb6262;
         }
