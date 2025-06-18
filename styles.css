@@ -7,7 +7,9 @@
 
             /* Transitions */
             --transition-speed: 0.2s;
-            --transition-timing: ease-in-out;
+            --transition-timing: cubic-bezier(0.25, 0.46, 0.45, 0.94); /* Smooth ease-out-quad */
+            --transition-timing-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* Subtle overshoot/spring for bounces */
+            --transition-fast: 0.15s;
 
             /* Radii */
             --border-radius-sm: 4px;
@@ -144,7 +146,7 @@
             height: 100%;
             min-height: 100%;
             opacity: 0;
-            animation: fadeIn 0.5s ease-in forwards;
+            animation: fadeIn 0.5s var(--transition-timing) forwards; /* Use new timing */
         }
 
         /* Apple-like fade-in animation */
@@ -217,12 +219,13 @@
             content: "";
             position: absolute;
             top: 0;
-            left: 1px;
-            width: 3px;
+            left: 0px; /* Adjust to expand from center */
+            width: 5px; /* Make it wider on hover/active */
             height: 100%;
             background-color: var(--resizer-hover-color);
-            opacity: 0.7;
-            transition: background-color 0.2s ease;
+            opacity: 1; /* Make it fully opaque */
+            transition: background-color var(--transition-speed) var(--transition-timing), width var(--transition-speed) var(--transition-timing), opacity var(--transition-speed) var(--transition-timing), left var(--transition-speed) var(--transition-timing);
+            border-radius: 2px; /* Slight roundness */
         }
 
         .sidebar-resizer::after {
@@ -234,7 +237,8 @@
             height: 100%;
             background-color: var(--resizer-color);
             opacity: 0.3;
-            transition: background-color 0.2s ease;
+            transition: background-color var(--transition-speed) var(--transition-timing), width var(--transition-speed) var(--transition-timing), opacity var(--transition-speed) var(--transition-timing), left var(--transition-speed) var(--transition-timing);
+            border-radius: 2px;
         }
 
         .sidebar-content {
@@ -344,7 +348,10 @@
             cursor: pointer;
             font-size: 0.9rem;
             font-weight: 600;
-            transition: background-color var(--transition-speed) var(--transition-timing), transform var(--transition-speed) var(--transition-timing), box-shadow var(--transition-speed) var(--transition-timing), opacity var(--transition-speed) var(--transition-timing);
+            transition: background-color var(--transition-speed) var(--transition-timing),
+                        transform var(--transition-speed) var(--transition-timing-spring), /* Use spring for transform */
+                        box-shadow var(--transition-speed) var(--transition-timing-spring), /* Use spring for shadow */
+                        opacity var(--transition-speed) var(--transition-timing);
             display: inline-flex;
             align-items: center;
             justify-content: center;
@@ -352,7 +359,7 @@
             box-shadow: var(--shadow-xs);
             line-height: 1.4;
             /* Prevent text jump on loading */
-            will-change: transform; /* Hint to the browser for better performance */
+            will-change: transform, background-color, box-shadow; /* Hint to the browser for better performance */
         }
 
         button:not(:disabled):hover {
@@ -362,7 +369,7 @@
         }
 
         button:not(:disabled):active {
-            transform: translateY(0);
+            transform: translateY(0px) translateZ(0); /* Ensure consistency and make it "press" in */
             box-shadow: var(--shadow-xs);
         }
 
@@ -451,14 +458,16 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            transition: transform 0.3s ease, opacity 0.3s ease;
+            transition: transform 0.3s var(--transition-timing), opacity 0.3s var(--transition-timing), background-color 0.2s var(--transition-timing), border-color 0.2s var(--transition-timing), box-shadow 0.2s var(--transition-timing); /* Add shadow transition */
             position: relative;
             font-size: 0.9rem;
             border: 1px solid transparent;
+            will-change: transform, background-color, box-shadow;
         }
 
         .playlist-item:hover {
             background-color: var(--hover-bg-color);
+            box-shadow: var(--shadow-xs); /* Slight shadow */
         }
 
         .playlist-item.active {
@@ -486,7 +495,9 @@
         .playlist-item.drag-over {
             outline: 2px dashed var(--primary-color);
             outline-offset: -2px;
-            background-color: var(--hover-bg-color);
+            background-color: var(--primary-color-light); /* Use a more active background */
+            transform: scale(1.01); /* Subtle "target" scale */
+            transition: all var(--transition-fast) ease-in-out; /* Quick transition for drag feedback */
         }
 
         .playlist-name {
@@ -593,7 +604,7 @@
             border-bottom: 1px solid var(--border-color-light);
             transition: all var(--transition-speed) var(--transition-timing);
             opacity: 0;
-            animation: fadeIn var(--transition-speed) ease-in 0.1s forwards;
+            animation: fadeIn var(--transition-speed) var(--transition-timing) 0.1s forwards; /* Use new timing */
         }
 
         #currentPlaylistTitle {
@@ -858,18 +869,20 @@
             overflow: hidden;
             box-shadow: var(--shadow-xs);
             cursor: pointer;
-            transition: transform 0.3s ease, opacity 0.3s ease;
+            transition: transform 0.3s var(--transition-timing-spring), opacity 0.3s var(--transition-timing), box-shadow 0.3s var(--transition-timing); /* Use spring for transform, smooth for others */
             display: flex;
             flex-direction: column;
             position: relative;
             border: 1px solid transparent;
             /* Placeholder for hover/drag */
+            will-change: transform, opacity, box-shadow;
         }
 
         .video-card:hover {
-            transform: translateY(-5px) scale(1.02);
-            opacity: 0.95;
-            will-change: transform, opacity;
+            transform: translateY(-5px) scale(1.02) translateZ(0);
+            opacity: 0.98; /* Slightly less opaque */
+            box-shadow: var(--shadow-md); /* More pronounced shadow on hover */
+            will-change: transform, opacity, box-shadow;
         }
 
         /* Drag & Drop Styles */
@@ -916,6 +929,12 @@
             /* Use border or outline for drop indicator */
             outline: 2px dashed var(--primary-color);
             outline-offset: -2px; /* Inside the card */
+            transform: scale(1.01); /* Subtle "target" scale */
+            background-color: var(--primary-color-light); /* Use a more active background */
+            transition: all var(--transition-fast) ease-in-out; /* Quick transition for drag feedback */
+        }
+        html[data-theme="dark"] .video-card.drag-over {
+            background-color: rgba(var(--primary-color-rgb), 0.2);
         }
 
 
@@ -1391,10 +1410,9 @@
 
             /* --- Mobile Tap Feedback --- */
             .playlist-item:active {
-                background-color: var(--hover-bg-color);
-                /* Reuse hover color for feedback */
-                transition: background-color 0.05s ease-out;
-                /* Faster feedback transition */
+                background-color: var(--primary-color-light); /* More direct feedback */
+                transform: translateY(0); /* Press back down */
+                transition: background-color 0.05s ease-out, transform 0.05s ease-out;
             }
 
             .video-card:active {
@@ -1506,7 +1524,8 @@
         /* Smooth transitions for theme changes */
         html[data-theme="dark"],
         html[data-theme="light"] {
-            transition: background-color 0.5s ease, color 0.5s ease;
+            transition: background-color 0.5s var(--transition-timing), color 0.5s var(--transition-timing);
+            will-change: background-color, color;
         }
 
         @keyframes scaleUp {
@@ -1521,12 +1540,12 @@
         }
 
         .playlist-item.added {
-            animation: scaleUp 0.3s ease-out forwards;
+            animation: scaleUp 0.3s var(--transition-timing-spring) forwards; /* Apply spring timing */
             will-change: transform, opacity;
         }
 
         .video-card.added {
-            animation: scaleUp 0.3s ease-out forwards;
+            animation: scaleUp 0.3s var(--transition-timing-spring) forwards; /* Apply spring timing */
             will-change: transform, opacity;
         }
 
