@@ -147,6 +147,10 @@
             min-height: 100%;
             opacity: 0;
             animation: fadeIn 0.5s var(--transition-timing) forwards; /* Use new timing */
+            padding-top: env(safe-area-inset-top, 0px);
+            padding-bottom: env(safe-area-inset-bottom, 0px);
+            padding-left: env(safe-area-inset-left, 0px);
+            padding-right: env(safe-area-inset-right, 0px);
         }
 
         /* Apple-like fade-in animation */
@@ -1553,4 +1557,11 @@
         .sidebar-resizer:hover::after {
             transform: translate3d(0, 0, 0);
             will-change: transform;
+        }
+
+        .header {
+            padding-top: env(safe-area-inset-top, 0px);
+        }
+        .footer {
+            padding-bottom: env(safe-area-inset-bottom, 0px);
         }
