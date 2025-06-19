@@ -153,6 +153,12 @@
             padding-right: env(safe-area-inset-right, 0px);
         }
 
+        /* Disable animation for iOS PWA */
+        html.ios-pwa body {
+            opacity: 1 !important;
+            animation: none !important;
+        }
+
         /* Apple-like fade-in animation */
         @keyframes fadeIn {
             from { opacity: 0; margin-top: 10px; }

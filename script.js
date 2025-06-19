@@ -88,6 +88,10 @@ function init() {
 
     setupEventListeners();
     updateThemeIcon();
+
+    if (isIOS() && isInStandaloneMode()) {
+        document.documentElement.classList.add('ios-pwa');
+    }
 }
 
 // Sidebar Resizing
@@ -1400,3 +1404,10 @@ function handleWindowResize() {
 
 // Start App
 document.addEventListener('DOMContentLoaded', init);
+
+function isIOS() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+function isInStandaloneMode() {
+    return ('standalone' in window.navigator) && window.navigator.standalone;
+}
