@@ -1262,6 +1262,7 @@
             /* Adjust header padding on mobile */
              .sidebar-header {
                  padding: 0 10px; /* Keep horizontal padding */
+                 padding-top: env(safe-area-inset-top, 0px); /* Add safe area inset to the top */
              }
 
             .sidebar-footer {
@@ -1271,6 +1272,7 @@
                 border-top: 1px solid var(--border-color-light); /* Restore original border-top */
                 border-radius: 0; /* Remove border-radius */
                 /* Transition property will inherit from the base rule */
+                padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); /* Adjust padding for safe area */
             }
 
             .main-content {
@@ -1288,6 +1290,7 @@
                 align-items: flex-start;
                 gap: 12px;
                 padding-bottom: 12px;
+                padding-top: env(safe-area-inset-top, 0px); /* Add safe area inset to the top */
             }
 
             #currentPlaylistTitle {
@@ -1335,7 +1338,7 @@
 
             .player-wrapper {
                 position: sticky;
-                top: 10px;
+                top: calc(10px + env(safe-area-inset-top, 0px)); /* Adjust top position for safe area */
                 margin-top: 16px;
                 margin-bottom: 16px;
                 /* Keep other styles like border-radius, overflow */
@@ -1440,6 +1443,7 @@
             }
             body.audio-only-active .player-wrapper {
                 padding: 5px 40px 5px 10px; /* Adjust mobile padding */
+                padding-top: calc(5px + env(safe-area-inset-top, 0px)); /* Adjust top padding for safe area */
             }
 
             .playlist-item:hover {
@@ -1488,6 +1492,7 @@
             box-shadow: var(--shadow-xs);
             border: 1px solid var(--border-color-light);
             transition: background-color var(--transition-speed) var(--transition-timing), border-color var(--transition-speed) var(--transition-timing), box-shadow var(--transition-speed) var(--transition-timing);
+            padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); /* Adjust padding for safe area */
         }
 
         .pagination-controls button {
