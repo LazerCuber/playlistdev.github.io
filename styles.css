@@ -736,8 +736,8 @@
 
         /* Player Wrapper */
         .player-wrapper {
-            margin-top: 24px;
-            margin-bottom: 24px;
+            margin-top: calc(24px + env(safe-area-inset-top, 0px));
+            margin-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
             border-radius: var(--border-radius-lg);
             overflow: hidden;
             box-shadow: var(--shadow-md);
@@ -746,7 +746,8 @@
             border: 1px solid var(--border-color-light);
             transition: border-color var(--transition-speed) var(--transition-timing), box-shadow var(--transition-speed) var(--transition-timing);
             background-color: #000;
-            /* Black background behind player */
+            padding-left: env(safe-area-inset-left, 0px);
+            padding-right: env(safe-area-inset-right, 0px);
         }
 
         .close-player-btn {
@@ -789,6 +790,8 @@
             overflow: hidden;
             transition: opacity var(--transition-speed) ease-in-out, height var(--transition-speed) ease-in-out;
             will-change: opacity, height;
+            padding-left: env(safe-area-inset-left, 0px);
+            padding-right: env(safe-area-inset-right, 0px);
         }
 
         /* Style to hide the video when audio-only is active */
