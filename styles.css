@@ -1339,7 +1339,7 @@
 
             .player-wrapper {
                 position: sticky;
-                top: calc(env(safe-area-inset-top, 0px) + 30px); /* Adjust top to account for notch */
+                top: calc(env(safe-area-inset-top, 0px) + 20px); /* Adjust top to account for notch */
                 margin-top: 16px;
                 margin-bottom: 16px;
                 z-index: var(--z-sticky);
