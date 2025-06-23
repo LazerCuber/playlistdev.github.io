@@ -748,6 +748,7 @@
             background-color: #000;
             padding-left: env(safe-area-inset-left, 0px);
             padding-right: env(safe-area-inset-right, 0px);
+            padding-top: env(safe-area-inset-top, 0px);
         }
 
         .close-player-btn {
@@ -1338,10 +1339,9 @@
 
             .player-wrapper {
                 position: sticky;
-                top: 10px;
+                top: calc(env(safe-area-inset-top, 0px) + 10px); /* <-- Use safe area inset */
                 margin-top: 16px;
                 margin-bottom: 16px;
-                /* Keep other styles like border-radius, overflow */
                 z-index: var(--z-sticky);
             }
 
