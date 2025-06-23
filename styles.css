@@ -736,8 +736,8 @@
 
         /* Player Wrapper */
         .player-wrapper {
-            margin-top: calc(24px + env(safe-area-inset-top, 0px));
-            margin-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+            margin-top: 24px;
+            margin-bottom: 24px;
             border-radius: var(--border-radius-lg);
             overflow: hidden;
             box-shadow: var(--shadow-md);
@@ -746,9 +746,7 @@
             border: 1px solid var(--border-color-light);
             transition: border-color var(--transition-speed) var(--transition-timing), box-shadow var(--transition-speed) var(--transition-timing);
             background-color: #000;
-            padding-left: env(safe-area-inset-left, 0px);
-            padding-right: env(safe-area-inset-right, 0px);
-            padding-top: env(safe-area-inset-top, 0px);
+            /* Black background behind player */
         }
 
         .close-player-btn {
@@ -791,8 +789,6 @@
             overflow: hidden;
             transition: opacity var(--transition-speed) ease-in-out, height var(--transition-speed) ease-in-out;
             will-change: opacity, height;
-            padding-left: env(safe-area-inset-left, 0px);
-            padding-right: env(safe-area-inset-right, 0px);
         }
 
         /* Style to hide the video when audio-only is active */
@@ -1339,43 +1335,11 @@
 
             .player-wrapper {
                 position: sticky;
-                top: calc(env(safe-area-inset-top, 0px) + 20px); /* Adjust top to account for notch */
+                top: 10px;
                 margin-top: 16px;
                 margin-bottom: 16px;
+                /* Keep other styles like border-radius, overflow */
                 z-index: var(--z-sticky);
-                padding-left: 0; /* Remove padding to avoid layout issues */
-                padding-right: 0;
-                padding-top: 0;
-            }
-
-            .close-player-btn {
-                top: calc(env(safe-area-inset-top, 0px) + 5px); /* Adjust top to account for notch */
-                right: 5px;
-                z-index: calc(var(--z-sticky) + 1);
-                background-color: rgba(0, 0, 0, 0.5);
-                color: white;
-                border: none;
-                border-radius: 50%;
-                width: 28px;
-                height: 28px;
-                padding: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-                opacity: 0.7;
-                transition: opacity 0.2s ease, background-color 0.2s ease;
-                transform: translateY(0);
-            }
-
-            body.audio-only-active .close-player-btn {
-                top: 50%;
-                right: 8px;
-                transform: translateY(-50%);
-                background-color: transparent;
-                color: var(--icon-color);
-                margin: 0;
-                transition: opacity 0.2s ease, background-color 0.2s ease, color 0.2s ease;
             }
 
             .video-grid {
