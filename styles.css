@@ -1261,8 +1261,7 @@
 
             /* Adjust header padding on mobile */
              .sidebar-header {
-                 padding: 0 10px; /* Keep horizontal padding */
-                 padding-top: env(safe-area-inset-top, 0px); /* Add safe area inset to the top */
+                 padding: 0 10px; /* Keep horizontal padding */ 
              }
 
             .sidebar-footer {
@@ -1272,7 +1271,6 @@
                 border-top: 1px solid var(--border-color-light); /* Restore original border-top */
                 border-radius: 0; /* Remove border-radius */
                 /* Transition property will inherit from the base rule */
-                padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); /* Adjust padding for safe area */
             }
 
             .main-content {
@@ -1290,7 +1288,6 @@
                 align-items: flex-start;
                 gap: 12px;
                 padding-bottom: 12px;
-                padding-top: env(safe-area-inset-top, 0px); /* Add safe area inset to the top */
             }
 
             #currentPlaylistTitle {
