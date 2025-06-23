@@ -1338,9 +1338,10 @@
 
             .player-wrapper {
                 position: sticky;
-                top: calc(env(safe-area-inset-top, 0px) + 10px); /* <-- Use safe area inset */
+                top: 10px;
                 margin-top: 16px;
                 margin-bottom: 16px;
+                /* Keep other styles like border-radius, overflow */
                 z-index: var(--z-sticky);
             }
 
